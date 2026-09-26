@@ -1,0 +1,108 @@
+{
+  "domain": "multi-agent autonomous software engineering studio / orchestration control plane",
+  "codename": "Studio",
+  "objective": "End-to-end multi-agent software engineering studio and orchestration engine that exceeds Paseo, iPolloWork, and Orkas across four pillars: hierarchical manager-worker coordination with task DAGs; deterministic git worktree isolation & concurrent merge reconciliation; dynamic least-privilege MCP/tool scoping against context flooding; high-density operator cockpit design language.",
+  "surveyed_at": "2026-09-26T20:21:47Z",
+  "corpus_root": "/home/john/Projects/STC/review",
+  "entities": [
+    "Manager / Tech Lead agent (human-facing scope negotiator, epic -> DAG decomposer)",
+    "Researcher / Explorer agent (indexing, dependency analysis, doc synthesis)",
+    "Implementer / Coder agent (isolated feature + bugfix delivery)",
+    "Auditor / Reviewer agent (static analysis, lint, test regression, security/diff gate)",
+    "Task DAG node (epic -> story -> task, typed artifacts, evidence receipts)",
+    "Git worktree + ephemeral branch (unit of coder isolation)",
+    "Staging / integration branch + merge queue (reconciliation point)",
+    "Tool Manifest / Role Capability Set (least-privilege tool slice per agent)",
+    "MCP Router / Tool Proxy Gateway (dynamic schema slicing)",
+    "Session Bridge / Harness Adapter (Claude Code, OpenCode, pi, headless loops)",
+    "Event Log / Execution Trace / Token Ledger",
+    "Operator Cockpit (War Room, Agent Stream, Audit Gate, MCP Registry)"
+  ],
+  "constraints": [
+    "No working-tree collisions between concurrent coder agents",
+    "Tool schema count per agent session must stay bounded (anti-context-flooding: 50+ tool schemas exhaust context and raise hallucination rate)",
+    "Deterministic worktree lifecycle: create, sync, teardown must be idempotent and crash-safe (no disk leaks)",
+    "Every merge into staging must pass an automated auditor gate before landing",
+    "Token accounting must be attributable per sub-agent, per task, per turn",
+    "Manager agent <-> human negotiation must be resumable and auditable",
+    "Must wrap heterogeneous CLI harnesses without forking them (stdio/PTY/JSON-RPC/ACP)",
+    "Coordination overhead must not itself dominate token budget (see: zero-token coordination, bernstein)",
+    "Teardown of orphaned worktrees/branches after crash or timeout is mandatory",
+    "This phase is research/architecture/design ONLY - no application code generation"
+  ],
+  "stack": {
+    "local_corpus_language_mix": {
+      "rust": ["agent-of-empires", "oh-my-pi (crates/ + Bazel + Bun)"],
+      "typescript_node": ["agent-orchestrator (go.work + TS)", "agent-swarm (Bun)", "opencode-swarm (Bun)", "Orkas", "paseo", "iPolloWork (pnpm)"],
+      "electron_vite": ["munder-difflin", "orca"],
+      "python_node": ["claude-smart"],
+      "go": ["agent-orchestrator backend/ (go.work)"],
+      "docs_only": ["awesome-agent-orchestrators"]
+    },
+    "candidate_runtime_for_studio": ["Rust core + TS/UI shell", "Go core + TS/UI shell", "TypeScript/Bun end-to-end"],
+    "candidate_transport": ["Unix domain sockets + JSON-RPC", "stdio/PTY multiplexer", "SQLite-backed durable bus", "WebSocket fanout to cockpit", "ACP (Agent Client Protocol)"],
+    "candidate_persistence": ["SQLite (WAL, event-sourced)", "content-addressed evidence store", "git-as-ledger for receipts"]
+  },
+  "open_loops_closed_2026_09_26": {
+    "worktree_lifecycle_implementers": "AoE (lock+prune fence, best-effort cleanup), orca (trash-rename deferred delete, --detach --no-checkout create), paseo (creation-intent enum, half-removed fallback), AO (speculative prepare/claim tokens, discard pile), opencode-swarm (fail-closed removal). All five implement real lifecycle; none is merely advisory.",
+    "dynamic_per_role_tool_gating": "THREE independent implementations: oh-my-pi ToolLoadMode essential|discoverable + xd:// progressive disclosure (production); Orkas tool-group catalog + tool_load lazy activation + ownerAgent isolation; opencode-swarm derived TOOL_METADATA + per-role TOOL_MAP + prompt budget. agent-swarm measured the cost (118 tools ~80K tok vs 8 tools ~2.2K tok, ~35x). iPolloWork and paseo are prompt-text / flat-list only - the negative examples.",
+    "real_task_DAG": "Only agent-swarm (dependsOn queue + offer/claim + deferred waits) - but zero referential integrity. iPolloWork declares dependency|parallel and never walks it. AO has no dependency concept. Orkas deleted its plan DAG (G8b). This is the corpus's central failure mode and Studio's opening.",
+    "ACP_as_session_bridge": "CONFIRMED. agent-of-empires/acp-worker/{adapters,aoe-agent,test-shim}; paseo generic-acp-agent.ts (Copilot/Cursor/Kimi/Kiro); agent-swarm acp-adapter + acp-targets; Orkas ACP diagnostics. ACP v1 stable JSON-RPC 2.0 over NDJSON/stdio with session/new|prompt|update|request_permission|restore. Rust schema crate agent-client-protocol-schema exists.",
+    "memory_graph_munder_difflin": "MEMORY_GRAPH_SPEC.md exists (force-directed SVG, bipartite agent-topic, >=2-agent mention filter, cap 24) but spec status line says component awaits sign-off. Richer memory model found in oh-my-pi mnemopi (veracity/valid_until/superseded_by/trust_tier + 4-voice recall) and claude-smart (citation registry + counterfactual cite-bar).",
+    "token_accounting_fidelity": "Best: munder-difflin costLifetime segment-peak fold (last value hid 59% of spend) + workTokensOf vs tokensOf split; AO cache-write 5m/1h ephemeral pricing split; oh-my-pi native per-family Rust tokenizers; opencode-swarm per-turn tokens_input/output/reasoning/cache. Turn-level is achievable and is the standard in the better repos.",
+    "runtime_language_ADR": "RESOLVED ADR-001: TypeScript on Bun for plane+gateway+cockpit, Rust sidecar only for Tree-sitter scope extraction. Rationale: ACP adapters are TS-first; cockpit is web regardless; plane is I/O-bound; Tree-sitter is the one CPU/correctness-critical piece.",
+    "merge_conflict_strategy_ADR": "RESOLVED ADR-003: write-intent fabric (semantic claims, file|fn|symbol) as default, worktree as fallback for destructive scopes. Grounded in wit/foremerge/Zaivern ecosystem + opencode-swarm scope leases + shell-write-detect."
+  },
+  "open_loops_open": [
+    "H1 spike: does function-level write-intent locking beat worktrees on cost AND success rate? Kill criterion: any conflict on non-overlapping claims, or success drop >5%",
+    "H2 spike: does zero-token deterministic coordination beat manager-agent dispatch? Kill criterion: completion drop >5% or any deadlock the baseline avoided",
+    "H3 spike: does progressive tool disclosure beat full-schema injection at 50+ tools? Predicted floor: must approach agent-swarm's measured 35x schema cut",
+    "Multi-machine ledger sync story (SQLite is single-writer) - Phase 4",
+    "Whether Bun's process/PTY primitives suffice at 20 concurrent agents (p99 scheduling <50ms) - revisit trigger for ADR-001"
+  ],
+  "key_empirical_facts": {
+    "tool_schema_bloat_measured": "118 tools ~311KB ~80K tokens -> 8 script tools ~8.8KB ~2.2K tokens (~35x) [agent-swarm research doc]",
+    "worktree_delete_latency": "git worktree remove of multi-GB checkout blocks IPC 8-35s; rename-to-trash is metadata-only [orca/worktree-trash.ts]",
+    "cost_ledger_undercount": "cumulative counter reset hid 59% of real lifetime spend until segment-peak fold [munder-difflin/costLifetime.ts]",
+    "phantom_tool_drift": "6 tools listed but never registered shipped in v6.48.0 [opencode-swarm engineering-invariants.md]",
+    "hooks_must_not_crash": "handlers swallow all exceptions by design [claude-smart/hook.py:173]"
+  },
+  "landscape_signals_from_index": {
+    "source": "review/awesome-agent-orchestrators/README.md (305 lines, checked 2026-07-28)",
+    "categories": [
+      "Parallel Coding Agents - Terminal (TUI/CLI)",
+      "Parallel Coding Agents - Desktop & Web",
+      "Multi-Agent Swarms",
+      "Autonomous Loop Runners",
+      "Autonomous Task Runners",
+      "Agent Infrastructure & Primitives",
+      "Personal Assistants"
+    ],
+    "notable_patterns_observed_in_ecosystem": [
+      "Vigil: manager runs the tree, workers + sub-managers, detail down / summaries up",
+      "YYLO: typed task + validation + merge + release-readiness boundaries, risk-based merge queue, receipt-backed changes",
+      "foremerge: agents DECLARE INTENT + semantic scope BEFORE writing; deterministic collision rules",
+      "wit: function-level (Tree-sitter) locks rather than file locks, warns before write",
+      "Zaivern Code: line-level ownership to prevent merge conflicts",
+      "gastown: Bors-style merge queue + health watchdogs at 20-30 agent scale",
+      "OrcaReplay: record at process+socket boundary so model traffic, exit codes, file deltas and MCP JSON-RPC share one timeline; offline replay + fork-at-checkpoint",
+      "bernstein: zero-token coordination (no model in the coordination loop), verify with tests",
+      "Tempest: shared local code-knowledge graph cuts token use across sessions",
+      "Fletch: each agent in own clone under Seatbelt/Docker, shared symbol+call-graph index served over MCP",
+      "neuralyzer: agent wipes its own session context and re-runs (Ralph-loop engineering)",
+      "aGiTrack: each turn committed to git with prompt/model/token-cost in the commit message",
+      "Concord MCP: claim work, detect edit collisions, transfer ownership, hand off review evidence",
+      "paperclip: agents wake on heartbeats to claim tickets under org charts, budgets, approval gates",
+      "no_human: second model in fresh session told to REFUTE 'done'; tamper guard blocks net test reductions",
+      "loki-mode: 41 agents / 8 swarms / nine quality gates / blind three-reviewer review"
+    ]
+  },
+  "output_contract": {
+    "brainstorm_report": ".research/brainstorm_20260926T202147Z.md",
+    "domain_model": "scratchpads/brainstorm_studio_arch/domain_model.json",
+    "required_phases": ["Phase 1 forensic audit matrix + cherry-pick list", "Phase 2 core platform architecture spec", "Phase 3 design language + UX spec", "Phase 4 ADRs + phased build plan"],
+    "required_dialectic": ["Thesis (wild proponent)", "Radical Antithesis (paradigm inverter)", "Synthesis (novel feature vectors, lateral architectural moves, experimental hypotheses with [HYPOTHESIS: ...])"],
+    "temperature_profile": "brainstorm 1.0-1.2 for divergence; audit grounding 0.2-0.4 for evidence",
+    "epistemic_tagging": "[VERIFIED path:line] for audit claims; [HYPOTHESIS: test] for speculation; [INFERRED: parents] for synthesis leaps"
+  }
+}

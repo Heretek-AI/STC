@@ -1,0 +1,70 @@
+{
+  "domain": "platformization of a multi-agent autonomous software engineering studio — deployment topology, harness strategy, memory, model management, role packs, quality gates",
+  "codename": "Studio / STC",
+  "pass": "brainstorm III — next-phase platform questions (2026-09-26)",
+  "builds_on": [
+    "plans/stc-master-roadmap.md (Phases 0-5 complete per plans/ROADMAP-AUDIT.md)",
+    ".research/brainstorm_20260926T203716Z.md",
+    ".research/brainstorm_20260926T211427Z.md",
+    "scratchpads/brainstorm_studio_arch/domain_model.json",
+    "scratchpads/brainstorm_studio_open_questions/domain_model.json"
+  ],
+  "surveyed_at": "2026-09-26T22:05:00Z",
+  "corpus_root": "/home/john/Projects/STC/review",
+  "stack": {
+    "shipped": {
+      "core": "studio-core Rust workspace (tokio, rusqlite WAL, tree-sitter, sha2)",
+      "modules": "worktree, state, dag, ledger, scheduler, session, mcp, merge, projection, verify, fabric, memory, creative, roles",
+      "shells": "cockpit/ (Tauri + React/Tailwind), tui/ (Ratatui)",
+      "adapters": "adapters/{acp,cli}",
+      "memory_ladder_shipped": "L0 git+receipts, L1 FTS5+reaper, L2 markdown, L3 lifecycle rows, L4 opt-in+reranker gate",
+      "roles_shipped": "RolePacks + registration parity + capability-token secret broker"
+    },
+    "unresolved_this_pass": [
+      "deployment topology: Docker stack vs desktop app vs hybrid",
+      "harness acquisition: BYO volume mount vs agent-manager install vs prebaked images",
+      "state persistence across image updates (volume layout, schema migrations, worktrees on bind mounts)",
+      "OAuth subscription harnesses (Claude/Codex/Antigravity) inside containers",
+      "forgo-BYO-agent and hand-build harness configs (BYOK + curated agents) — viability",
+      "LLM API management: external gateway (LiteLLM/BiFrost/OmniRoute) vs bundled vs integrated",
+      "model-to-agent assignment: preset tiers vs user assignment vs auto-routing",
+      "pi vs opencode as specialist RolePack substrate; pi.dev/packages ecosystem",
+      "per-profile skills/MCP inventory design",
+      "coding standards enforcement: LSPs, hooks, lefthook, static analysis (semgrep/sonar/linters/formatters)"
+    ]
+  },
+  "entities": [
+    "Deployment Unit (desktop binary / container stack / hybrid worker image)",
+    "Harness Distro (installed CLI harness + its config dir + its auth material)",
+    "Auth Material (OAuth session vs API key vs subscription entitlement) — never a raw token in an agent context",
+    "State Volume (what survives image updates: config, auth, sqlite, worktrees, caches, logs)",
+    "Model Namespace (provider profile -> model id -> role binding)",
+    "Credential Pool (multi-subscription BYOK aggregation)",
+    "RolePack (versioned agent template: system prompt + skills + MCP slice + model binding + harness profile)",
+    "Quality Gate Stack (agent-loop / pre-commit / pre-push / merge-queue / CI)",
+    "Diagnostic Broker (LSP -> SARIF/structured findings -> agent feedback channel)",
+    "Anti-circumvention Guard (agents may not weaken lint/config/ignore/baseline)"
+  ],
+  "constraints": [
+    "local-first: user's code and OAuth material stay on user hardware by default",
+    "agents never see raw OAuth tokens — capability handles only (already shipped in roles/)",
+    "state must survive harness and image churn without re-login and without volume drift",
+    "quality gates must be fail-closed and non-bypassable by the agent under test",
+    "memory must be structured-first; vector index stays opt-in with mandatory reranker (prior pass)",
+    "no marketplace / cloud-hosting / mobile scope creep in the next phase (roadmap boundary)",
+    "coordination overhead must not dominate token budget"
+  ],
+  "open_loops": [
+    "Q1 memory: does any market product beat the shipped Memory Ladder for coding-agent use? [HYPOTHESIS to be written after research]",
+    "Q2 docker-vs-desktop: which topology, and what is the migration path from the shipped Tauri bundle?",
+    "Q3 harness: BYO volume vs agent-manager vs prebaked — decide with OAuth + update-cadence evidence",
+    "Q4 persistence: volume/state layout contract that survives image rebase",
+    "Q5 forgo-BYO-agent and hand-build configs — does it unlock subscription models (OpenCode Zen) without OAuth pain?",
+    "Q6 model management: gateway integration contract; tier presets vs assignment UI",
+    "Q7 pi vs opencode RolePack substrate; is pi.dev/packages worth pulling from?",
+    "Q8 steal list from happier / gentle-ai / kasetto",
+    "Q9 skills+MCP inventory per RolePack",
+    "Q10 quality gate stack: LSP broker, hooks, lefthook, semgrep/sonar/ruff/biome, SARIF feedback loop, anti-circumvention"
+  ],
+  "epistemic_tagging": "[VERIFIED: path|url] | [INFERRED: parents] | [HYPOTHESIS: measurable test]"
+}

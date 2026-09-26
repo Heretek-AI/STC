@@ -1,0 +1,75 @@
+{
+  "domain": "multi-agent autonomous software engineering studio — open questions pass (multimodal, memory, completion, identity)",
+  "codename": "Studio",
+  "pass": "brainstorm II — 2026-09-26T21:14:27Z",
+  "builds_on": [
+    ".research/brainstorm_20260926T203716Z.md",
+    "plans/studio-architecture-report.md",
+    "scratchpads/brainstorm_studio_arch/domain_model.json"
+  ],
+  "entities": [
+    "EvidencePacket (claims + verbatim cites + content-addressed blobs + open_questions)",
+    "Completion Contract (machine-checkable DoD, evidence-bearing done receipt, tap-out detector)",
+    "RolePack (versioned agent template: role, tool manifest, harness profiles, budget, returns-type)",
+    "Profile-as-Code (CLAUDE_CONFIG_DIR + settings + role manifest + capability-token handles)",
+    "Memory Ladder L0-L4 (git/receipts, SQL+FTS, markdown, lifecycle rows, optional vector+reranker)",
+    "Source of Record (SVG/HTML/CSS, Remotion, OpenSCAD, PPTX) vs Render Farm (deterministic pixels)",
+    "Capability-token broker (loopback, per-task handles, agents never hold raw OAuth tokens)",
+    "Approval inbox + anchored findings + structured forms (scope / budget / taste)",
+    "Accessibility-tree driver (AXUI/UIA/AT-SPI) with generated retained automation code"
+  ],
+  "constraints": [
+    "done is a property of evidence, not language — proposing next steps is a blocked receipt, never done",
+    "creative agents author source of record only; rendering is deterministic and out-of-band",
+    "binary artifacts never text-merge — merge by winning source hash and re-render",
+    "researcher and implementer tools are disjoint; researchers never write, implementers never browse",
+    "agents never receive raw OAuth credentials — only short-lived scoped capability handles",
+    "vector index is opt-in per project, versioned, re-derivable, and always reranked",
+    "never store what git already stores",
+    "rate-limit budgets are per-account, not per-agent",
+    "desktop automation is for QA and evidence capture, not delivery",
+    "role tool lists are derived from a compile-checked manifest, never hand-kept"
+  ],
+  "stack": {
+    "confirmed_mechanisms": {
+      "multi_profile": "CLAUDE_CONFIG_DIR (official; ecosystem: claude-code-profiles, ccm, direnv patterns). Codex via auth.json. Abstract behind Orkas LocalCliCapabilities (resume: native|session-id|none).",
+      "auth_methods": "secret-form | oauth-pkce | device-code | hosted-browser (iPolloWork manifest v2)",
+      "memory_best_in_corpus": "oh-my-pi mnemopi MemoryRow: veracity, valid_until, superseded_by, trust_tier, recall_count + 4-voice retrieval (vector/graph/fact/temporal)",
+      "computer_use": "accessibility-tree first (Playwright MCP / Windows-MCP / Peekaboo), pixels second",
+      "creative_editable": "HTML/CSS/SVG, Remotion, PPTX source, OpenSCAD/Blender-py"
+    }
+  },
+  "community_signal": {
+    "likes": ["worktrees as chaos relief", "code quality", "MCP ecosystem", "CLAUDE.md culture"],
+    "hates": ["token cost compounding", "subagent 4x burn", "quality instability", "profile/setup friction"],
+    "missing_everywhere": [
+      "semantic write-conflict prevention",
+      "zero-token coordination",
+      "completion discipline (anti-tap-out)",
+      "pre-declared token budgets as contracts",
+      "creative lanes as first-class rather than bolted-on"
+    ],
+    "key_measurements": [
+      "3 subagents ~ 4x single-thread token spend (youcanbuildthings)",
+      "~3% quality drop from caching bug postmortem (Anthropic April)",
+      "100GB in 8 hours from never-delete memory bug (munder-difflin palaceReap)",
+      "118 tools ~80K tokens vs 8 tools ~2.2K tokens, ~35x (agent-swarm)",
+      "worktree remove of multi-GB checkout blocks IPC 8-35s (orca)"
+    ]
+  },
+  "open_loops": [
+    "H1 Completion Contract: does it cut tap-out from >40% to <10% at <20% cost? Kill if <15pt reduction or >40% cost",
+    "H2 Evidence Packets: 2x grounding rate vs prose summaries? Kill if <1.3x or researcher time doubles",
+    "H3 Memory Ladder: does L0-L3 answer >70% of queries without embeddings? Kill if <50% (builds L4)",
+    "H4 Profile-as-Code: zero credential cross-talk across 5 agents / 2 accounts, setup <2min",
+    "Which formats are genuinely source-of-record for this team (SVG/PPTX/Remotion/OpenSCAD)?",
+    "MCP authorization spec maturity for desktop clients — research before Phase 1",
+    "Does adversarial refute-done beat check-only gate on cost-adjusted catch rate?"
+  ],
+  "output_contract": {
+    "brainstorm_report": ".research/brainstorm_20260926T211427Z.md",
+    "domain_model": "scratchpads/brainstorm_studio_open_questions/domain_model.json",
+    "required_dialectic": ["Thesis", "Radical Antithesis (9 inversions)", "Synthesis: 5 feature vectors, 3 lateral moves, 3 hypotheses with [HYPOTHESIS: ...]"],
+    "epistemic_tagging": "[VERIFIED path] | [INFERRED: parents] | [HYPOTHESIS: test]"
+  }
+}

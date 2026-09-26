@@ -1,0 +1,21 @@
+:root {
+  /* unified dark oklch token set — single source for Tauri + Ratatui */
+  --surface-0: oklch(0.18 0.01 260);
+  --surface-1: oklch(0.22 0.012 260);
+  --surface-2: oklch(0.26 0.014 260);
+  --border: oklch(0.32 0.015 260);
+  --text-0: oklch(0.93 0.005 260);
+  --text-1: oklch(0.75 0.01 260);
+  --text-dim: oklch(0.55 0.01 260);
+  --status-building: oklch(0.7 0.15 250);
+  --status-validating: oklch(0.8 0.15 90);
+  --status-review: oklch(0.72 0.16 330);
+  --status-ready: oklch(0.75 0.16 150);
+  --diff-added: oklch(0.75 0.16 150);
+  --diff-modified: oklch(0.8 0.15 90);
+  --diff-deleted: oklch(0.68 0.18 25);
+  --diff-renamed: oklch(0.72 0.14 300);
+  --mono: ui-monospace, "JetBrains Mono", Menlo, monospace;
+}
+body { background: var(--surface-0); color: var(--text-0); font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.stale { color: var(--text-dim); font-size: 11px; }

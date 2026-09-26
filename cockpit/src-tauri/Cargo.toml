@@ -1,0 +1,16 @@
+[package]
+name = "studio-cockpit-tauri"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+studio-core = { path = "../../studio-core" }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+
+[[bin]]
+name = "studio-cockpit"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }

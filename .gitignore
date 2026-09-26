@@ -1,0 +1,29 @@
+# Rust build artifacts
+target/
+**/*.rs.bk
+
+# Node
+node_modules/
+cockpit/dist/
+
+# SQLite / runtime state
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+# Reference corpus (4.8G vendored audits; cloned separately, never committed)
+review/
+
+# Installed agent skills (reproducible via skills-lock.json)
+.agents/
+
+# Tauri bundler workdirs
+*.AppDir/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+# Tauri generated
+cockpit/src-tauri/gen/
