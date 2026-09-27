@@ -1,7 +1,7 @@
 // Cockpit views: read projection of studio.db, polled every 100ms (CDC).
 // The UI never owns state — if GUI and studio.db disagree, the GUI is wrong.
-import { useEffect, useState } from "react";
-import type { CSSProperties } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import Providers from "./pages/Providers";
 
@@ -30,6 +30,111 @@ async function pollSnapshot(): Promise<Snapshot> {
 
 function StaleBadge({ ms }: { ms: number }) {
   return <span className="stale">source: studio.db · updated {ms}ms ago</span>;
+}
+
+const LANE_COLORS: Record<string, string> = {
+  building: "var(--status-building)",
+  validating: "var(--status-validating)",
+  "in-review": "var(--status-review)",
+  ready: "var(--status-ready)",
+};
+
+function laneColor(lane: string): string {
+  return LANE_COLORS[lane] ?? "var(--text-dim)";
+}
+
+function StatusPill({ lane, status }: { lane: string; status: string }) {
+  return (
+    <span className="pill" style={{ borderColor: laneColor(lane), color: laneColor(lane) }}>
+      {status}
+    </span>
+  );
+}
+
+function Section({
+  title,
+  count,
+  empty,
+  children,
+}: {
+  title: string;
+  count: number;
+  empty: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="card">
+      <h2>
+        {title} <span className="count">{count}</span>
+      </h2>
+      {count === 0 ? <p className="empty">{empty}</p> : children}
+    </section>
+  );
+}
+
+function ErrorBanner({ message }: { message: string }) {
+  return (
+    <p className="error" role="alert">
+      studio.db unreachable ({message}) — showing last snapshot; check the daemon.
+    </p>
+  );
+}
+
+function TabButton({
+  label,
+  hotkey,
+  active,
+  onSelect,
+}: {
+  label: string;
+  hotkey: string;
+  active: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      style={tabStyle(active)}
+      onClick={onSelect}
+      aria-pressed={active}
+      accessKey={hotkey}
+      title={`${label} (Alt+${hotkey})`}
+    >
+      {label}
+    </button>
+  );
+}
+
+function TabNav({
+  tab,
+  onSelect,
+}: {
+  tab: "war-room" | "providers";
+  onSelect: (t: "war-room" | "providers") => void;
+}) {
+  return (
+    <nav style={{ display: "flex", gap: 8, margin: "8px 0" }}>
+      <TabButton label="War Room" hotkey="1" active={tab === "war-room"} onSelect={() => onSelect("war-room")} />
+      <TabButton label="Providers" hotkey="2" active={tab === "providers"} onSelect={() => onSelect("providers")} />
+    </nav>
+  );
+}
+
+function ConnectState({ pollError }: { pollError: string | null }) {
+  if (pollError) return <ErrorBanner message={pollError} />;
+  return <div className="loading">connecting to studio.db…</div>;
+}
+
+function tabStyle(active: boolean): CSSProperties {
+  return {
+    background: active ? "var(--surface-2)" : "var(--surface-0)",
+    color: active ? "var(--text-0)" : "var(--text-dim)",
+    border: "1px solid var(--border)",
+    borderRadius: 6,
+    padding: "6px 12px",
+    fontFamily: "var(--mono)",
+    fontSize: 12,
+    cursor: "pointer",
+  };
 }
 
 function isDevMode(mode: string): boolean {
@@ -134,74 +239,73 @@ function RuntimeBadge({ mode }: { mode: string }) {
 
 export default function App() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
+  const [pollError, setPollError] = useState<string | null>(null);
   const [tab, setTab] = useState<"war-room" | "providers">("war-room");
+  const failures = useRef(0);
   useEffect(() => {
-    const t = setInterval(() => pollSnapshot().then(setSnap).catch(() => {}), 100);
+    const t = setInterval(() => {
+      pollSnapshot()
+        .then((s) => {
+          failures.current = 0;
+          setPollError(null);
+          setSnap(s);
+        })
+        .catch((e: unknown) => {
+          failures.current += 1;
+          if (failures.current >= 3) {
+            setPollError(e instanceof Error ? e.message : String(e));
+          }
+        });
+    }, 100);
     return () => clearInterval(t);
   }, []);
-  if (!snap) return <div>connecting to studio.db…</div>;
-  const tabStyle = (active: boolean): CSSProperties => ({
-    background: active ? "var(--surface-2)" : "var(--surface-0)",
-    color: active ? "var(--text-0)" : "var(--text-dim)",
-    border: "1px solid var(--border)",
-    borderRadius: 6,
-    padding: "6px 12px",
-    fontFamily: "var(--mono)",
-    fontSize: 12,
-    cursor: "pointer",
-  });
+  if (!snap) return <ConnectState pollError={pollError} />;
   return (
-    <div>
+    <div className="cockpit">
       <header>
         <h1>STUDIO</h1> <StaleBadge ms={snap.db_age_ms} />
         <RuntimeBadge mode={runtimeModeOf(snap)} />
         <AutonomyBadge mode={autonomyModeOf(snap)} />
-        <nav style={{ display: "flex", gap: 8, margin: "8px 0" }}>
-          <button
-            style={tabStyle(tab === "war-room")}
-            onClick={() => setTab("war-room")}
-            aria-pressed={tab === "war-room"}
-          >
-            War Room
-          </button>
-          <button
-            style={tabStyle(tab === "providers")}
-            onClick={() => setTab("providers")}
-            aria-pressed={tab === "providers"}
-          >
-            Providers
-          </button>
-        </nav>
+        {pollError && <ErrorBanner message={pollError} />}
+        <TabNav tab={tab} onSelect={setTab} />
       </header>
       {tab === "providers" ? (
         <Providers />
       ) : (
-        <>
-      <section data-view="war-room">
-        <h2>War Room</h2>
-        {snap.fleet.map((t) => (
-          <div key={t.id}>{t.lane} {t.id} {t.kind} {t.status}</div>
-        ))}
-      </section>
-      <section data-view="agent-stream">
-        <h2>Agent Stream</h2>
-        {snap.stream.slice(0, 50).map((e) => (
-          <div key={e.seq}>#{e.seq} {e.kind} {e.payload}</div>
-        ))}
-      </section>
-      <section data-view="audit">
-        <h2>Audit &amp; Gatekeeper</h2>
-        {snap.receipts.map((r) => (
-          <div key={r.id}>{r.id} task={r.task_id} evidence={r.evidence}</div>
-        ))}
-      </section>
-      <section data-view="registry">
-        <h2>MCP Registry</h2>
-        {snap.burn.map((b) => (
-          <div key={b.session}>{b.session} {b.total}</div>
-        ))}
-      </section>
-        </>
+        <main className="grid">
+          <Section title="War Room" count={snap.fleet.length} empty="No tasks yet — dispatch from the manager.">
+            {snap.fleet.map((t) => (
+              <div className="row" key={t.id}>
+                <StatusPill lane={t.lane} status={t.status} />
+                <code>{t.id}</code> <span className="dim">{t.kind}</span>
+              </div>
+            ))}
+          </Section>
+          <Section title="Agent Stream" count={snap.stream.length} empty="No events yet — activity appears here live.">
+            {snap.stream.slice(0, 50).map((e) => (
+              <div className="row" key={e.seq}>
+                <span className="dim">#{e.seq}</span> <span>{e.kind}</span>{" "}
+                <span className="dim">{e.payload}</span>
+              </div>
+            ))}
+          </Section>
+          <Section title="Audit & Gatekeeper" count={snap.receipts.length} empty="No receipts — nothing verified yet.">
+            {snap.receipts.map((r) => (
+              <div className="row" key={r.id}>
+                <code>{r.id}</code> <span className="dim">task={r.task_id}</span>{" "}
+                <span className="dim">{r.evidence}</span>
+              </div>
+            ))}
+          </Section>
+          <Section title="MCP Registry" count={snap.burn.length} empty="No token burn recorded.">
+            {snap.burn.map((b) => (
+              <div className="row" key={b.session}>
+                <code>{b.session}</code>{" "}
+                <span className="num">{b.total}</span>
+              </div>
+            ))}
+          </Section>
+        </main>
       )}
     </div>
   );

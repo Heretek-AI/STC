@@ -85,6 +85,12 @@ enum Cmd {
         #[arg(long)]
         mode: Option<String>,
     },
+    /// Print the read-only projection snapshot as JSON (cockpit browser-dev
+    /// `/snapshot` source; UI never owns state).
+    Snapshot {
+        #[arg(long)]
+        db: String,
+    },
 }
 
 #[tokio::main]
@@ -189,6 +195,25 @@ async fn main() {
         }
         Cmd::Up { dev, repo } => cmd_up(dev, repo).await,
         Cmd::Autonomy { db, repo, mode } => cmd_autonomy(&db, &repo, mode),
+        Cmd::Snapshot { db } => match studio_core::state::StateStore::open(&db) {
+            Ok(s) => match s.snapshot() {
+                Ok(snap) => match serde_json::to_string(&snap) {
+                    Ok(json) => println!("{json}"),
+                    Err(e) => {
+                        eprintln!("snapshot serialize failed: {e}");
+                        std::process::exit(1);
+                    }
+                },
+                Err(e) => {
+                    eprintln!("snapshot failed: {e}");
+                    std::process::exit(1);
+                }
+            },
+            Err(e) => {
+                eprintln!("open db failed: {e}");
+                std::process::exit(1);
+            }
+        },
     }
 }
 
