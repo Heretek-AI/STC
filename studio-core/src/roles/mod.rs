@@ -406,6 +406,48 @@ impl RolePack {
         }
     }
 
+    /// All native packs: pi library + engineering + QA + creative/management/ops.
+    /// Sources of truth for marketplace mirrors (#11).
+    pub fn all_native_packs() -> Vec<Self> {
+        let mut all = Self::pi_library();
+        all.extend(Self::engineering_batch());
+        all.extend(Self::qa_batch());
+        all.extend(Self::creative_management_ops_batch());
+        all
+    }
+
+    /// Mirror every native pack under `root/roles/<name>/`: `rolepack.yaml`,
+    /// pinned `rolepack.lock` (over the `skills/profile` label asset), and the
+    /// three emitted targets. Fails closed on the first pack that does not
+    /// verify clean (parity + manifest + secrets + emit + lock).
+    pub fn mirror_packs(
+        root: &std::path::Path,
+        catalog: &[String],
+    ) -> Result<Vec<std::path::PathBuf>, String> {
+        let mut out = vec![];
+        for pack in Self::all_native_packs() {
+            let dir = root.join("roles").join(&pack.name);
+            out.push(pack.save_pack(&dir, catalog)?);
+            for p in emit_pack(&dir, &pack)? {
+                out.push(p);
+            }
+            let label = format!("{}-skills", pack.name);
+            let mut skills = HashMap::new();
+            skills.insert("profile".to_string(), hash_asset(&label));
+            let mut assets = HashMap::new();
+            assets.insert("skills".to_string(), skills);
+            let mut cskills = HashMap::new();
+            cskills.insert("profile".to_string(), label);
+            let mut contents = HashMap::new();
+            contents.insert("skills".to_string(), cskills);
+            let lock = compute_lock(&pack, &assets, &contents)?;
+            out.push(write_lock(&dir, &lock)?);
+            verify_lock(&dir, &contents)?;
+            verify_emitted(&dir, &pack, catalog)?;
+        }
+        Ok(out)
+    }
+
     /// The five Pi-profile packs (#13): coder-web flagship + four new profiles.
     pub fn pi_library() -> Vec<Self> {
         vec![
@@ -1826,6 +1868,21 @@ mod tests {
         );
         for pack in &packs {
             assert_pack_coherent(pack, &cat);
+        }
+    }
+
+    #[test]
+    fn marketplace_mirror_verifies_clean() {
+        let cat = catalog();
+        let dir = tempfile::tempdir().unwrap();
+        let files = RolePack::mirror_packs(dir.path(), &cat).unwrap();
+        let packs = RolePack::all_native_packs();
+        assert_eq!(packs.len(), 35);
+        assert!(!files.is_empty());
+        for pack in &packs {
+            let pdir = dir.path().join("roles").join(&pack.name);
+            assert!(pdir.join("rolepack.yaml").exists());
+            assert!(pdir.join("rolepack.lock").exists());
         }
     }
 

@@ -91,6 +91,15 @@ enum Cmd {
         #[arg(long)]
         db: String,
     },
+    /// List native RolePack names (sources of truth for marketplace mirrors).
+    Rolepacks,
+    /// Mirror all native RolePacks to `roles/<name>/{rolepack.yaml,
+    /// rolepack.lock, emitted targets}` under `--dir` (marketplace publish).
+    /// Fails closed on the first pack that does not verify clean.
+    ExportPacks {
+        #[arg(long)]
+        dir: String,
+    },
 }
 
 #[tokio::main]
@@ -214,6 +223,27 @@ async fn main() {
                 std::process::exit(1);
             }
         },
+        Cmd::Rolepacks => {
+            for p in studio_core::roles::RolePack::all_native_packs() {
+                println!(
+                    "{} v{} slot={} harness={}",
+                    p.name, p.version, p.model_slot, p.harness_profile.harness
+                );
+            }
+        }
+        Cmd::ExportPacks { dir } => {
+            let catalog: Vec<String> = studio_core::mcp::catalog()
+                .into_iter()
+                .map(|t| t.id)
+                .collect();
+            match studio_core::roles::RolePack::mirror_packs(std::path::Path::new(&dir), &catalog) {
+                Ok(files) => println!("mirrored {} files under {dir}/roles", files.len()),
+                Err(e) => {
+                    eprintln!("export packs failed: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
     }
 }
 
