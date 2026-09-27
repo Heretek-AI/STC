@@ -1395,9 +1395,18 @@ pub fn emit_pack(
 ) -> Result<Vec<std::path::PathBuf>, String> {
     pack.check_no_raw_secrets()?;
     let tools_line = pack.tools.join(", ");
+    // Output schema travels with every target (H-C fidelity: compiled targets
+    // must not lose the pack's output contract).
+    let schema_block = match &pack.output_schema {
+        Some(s) => format!(
+            "\n```json output-schema\n{}\n```\n",
+            serde_json::to_string_pretty(s).unwrap()
+        ),
+        None => String::new(),
+    };
     let omp = format!(
-        "---\nname: {}\nmodel_slot: {}\ntools: [{}]\n---\n\n{}\n",
-        pack.name, pack.model_slot, tools_line, pack.system_prompt
+        "---\nname: {}\nmodel_slot: {}\ntools: [{}]\n---\n\n{}\n{}",
+        pack.name, pack.model_slot, tools_line, pack.system_prompt, schema_block
     );
     let shim = serde_json::json!({
         "name": pack.name,
@@ -1405,11 +1414,12 @@ pub fn emit_pack(
             "system_prompt": pack.system_prompt,
             "tools": pack.tools,
             "model_slot": pack.model_slot,
+            "output_schema": pack.output_schema,
         }
     });
     let mirror = format!(
-        "---\nname: {}\ntools: [{}]\n---\n\n> Mirrored from RolePack {} v{} (do not hand-edit).\n\n{}\n",
-        pack.name, tools_line, pack.name, pack.version, pack.system_prompt
+        "---\nname: {}\nmodel_slot: {}\ntools: [{}]\n---\n\n> Mirrored from RolePack {} v{} (do not hand-edit).\n\n{}\n{}",
+        pack.name, pack.model_slot, tools_line, pack.name, pack.version, pack.system_prompt, schema_block
     );
     let files = [
         (format!("agents/{}.md", pack.name), omp),
@@ -1431,6 +1441,102 @@ pub fn emit_pack(
     Ok(out)
 }
 
+/// H-C structural fidelity (issue #3): how much of the native pack surface
+/// survives compilation to each emitted target. Scored 0–100 per target:
+/// tools exact 40, prompt verbatim 30, model slot 15, output schema 15.
+/// The 5% hypothesis band and 15% kill line are evaluated in tests.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetFidelity {
+    pub target: EmitTarget,
+    /// 0–100.
+    pub score: u32,
+    /// Human-readable losses (empty at 100).
+    pub losses: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FidelityReport {
+    pub pack_name: String,
+    pub targets: Vec<TargetFidelity>,
+}
+
+impl FidelityReport {
+    pub fn min_score(&self) -> u32 {
+        self.targets.iter().map(|t| t.score).min().unwrap_or(0)
+    }
+}
+
+fn emitted_body(
+    dir: &std::path::Path,
+    pack: &RolePack,
+    target: EmitTarget,
+) -> Result<String, String> {
+    match target {
+        EmitTarget::BasePi => {
+            std::fs::read_to_string(dir.join("package.json")).map_err(|e| e.to_string())
+        }
+        EmitTarget::Omp => std::fs::read_to_string(dir.join(format!("agents/{}.md", pack.name)))
+            .map_err(|e| e.to_string()),
+        EmitTarget::Opencode => {
+            std::fs::read_to_string(dir.join(format!(".opencode/agents/{}.md", pack.name)))
+                .map_err(|e| e.to_string())
+        }
+    }
+}
+
+fn score_schema_presence(body: &str, pack: &RolePack, target: EmitTarget) -> Result<bool, String> {
+    match &pack.output_schema {
+        None => Ok(true),
+        Some(schema) => {
+            if target == EmitTarget::BasePi {
+                let v: serde_json::Value = serde_json::from_str(body).map_err(|e| e.to_string())?;
+                Ok(v.pointer("/pi/output_schema") == Some(schema))
+            } else {
+                let want = serde_json::to_string_pretty(schema).map_err(|e| e.to_string())?;
+                Ok(body.contains(&want))
+            }
+        }
+    }
+}
+
+/// Score one emitted target against its native pack (structural leg of H-C).
+pub fn fidelity_report(dir: &std::path::Path, pack: &RolePack) -> Result<FidelityReport, String> {
+    let mut targets = vec![];
+    for target in [EmitTarget::Omp, EmitTarget::BasePi, EmitTarget::Opencode] {
+        let mut score = 0u32;
+        let mut losses = vec![];
+        if read_emitted_tools(dir, pack, target)? == pack.tools {
+            score += 40;
+        } else {
+            losses.push("tools drift".to_string());
+        }
+        let body = emitted_body(dir, pack, target)?;
+        if body.contains(&pack.system_prompt) {
+            score += 30;
+        } else {
+            losses.push("prompt not verbatim".to_string());
+        }
+        if body.contains(&pack.model_slot) {
+            score += 15;
+        } else {
+            losses.push("model slot missing".to_string());
+        }
+        if score_schema_presence(&body, pack, target)? {
+            score += 15;
+        } else {
+            losses.push("output schema missing".to_string());
+        }
+        targets.push(TargetFidelity {
+            target,
+            score,
+            losses,
+        });
+    }
+    Ok(FidelityReport {
+        pack_name: pack.name.clone(),
+        targets,
+    })
+}
 /// Verify emitted targets: each parses back to exactly the pack tools, and
 /// every tool exists in the catalog (extends `check_parity` to all targets).
 pub fn verify_emitted(
@@ -1883,6 +1989,29 @@ mod tests {
             let pdir = dir.path().join("roles").join(&pack.name);
             assert!(pdir.join("rolepack.yaml").exists());
             assert!(pdir.join("rolepack.lock").exists());
+        }
+    }
+
+    #[test]
+    fn hc_structural_fidelity_within_hypothesis_band() {
+        // H-C structural leg across 6 roles (flagship + pi library):
+        // hypothesis ≥95 per target; kill line would be <85 (15% gap).
+        for pack in RolePack::pi_library() {
+            let dir = tempfile::tempdir().unwrap();
+            emit_pack(dir.path(), &pack).unwrap();
+            let report = fidelity_report(dir.path(), &pack).unwrap();
+            assert_eq!(report.pack_name, pack.name);
+            for t in &report.targets {
+                assert!(
+                    t.score >= 95,
+                    "{}:{:?} fidelity {} below hypothesis band (losses: {:?})",
+                    pack.name,
+                    t.target,
+                    t.score,
+                    t.losses
+                );
+            }
+            assert_eq!(report.min_score(), 100);
         }
     }
 
