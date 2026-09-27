@@ -1,0 +1,4 @@
+# Format-on-write support: canonical formatting for all lane languages.
+# Agents and editors must match these; pre-commit enforces rustfmt --check.
+edition = "2021"
+max_width = 100

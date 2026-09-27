@@ -1,0 +1,23 @@
+# STC lane worker base (harness-free): Debian + git + node + python + rust toolchain
+# basics. NO harness CLIs prebaked (ToS/update-skew/OAuth) — the harness manager
+# installs container-native official releases into the studio-harness volume at
+# lane runtime. NO secrets baked in. Runs as the invoking UID/GID (gosu-style
+# via `user:` mapping from .env) so worktree files match host ownership.
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git openssh-client ca-certificates curl \
+    nodejs npm python3 python3-pip \
+    build-essential pkg-config libssl-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+# Rust toolchain via rustup (lane-local, cached in studio-toolchains volume)
+ENV RUSTUP_HOME=/opt/toolchains/rustup CARGO_HOME=/opt/toolchains/cargo
+ENV PATH="/opt/toolchains/cargo/bin:${PATH}"
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --profile minimal --default-toolchain stable \
+ && rm -rf /opt/toolchains/registry /opt/toolchains/git
+
+WORKDIR /workspace
+CMD ["sleep", "infinity"]

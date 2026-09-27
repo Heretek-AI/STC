@@ -8,6 +8,10 @@
 
 pub mod anti_stall;
 pub mod dod;
+pub mod fallow;
+pub mod freeze;
 
 pub use anti_stall::{DoomLoopDetector, StallSupervisor};
-pub use dod::{DodCheck, DodReceipt, TapOut, evaluate_done};
+pub use dod::{evaluate_done, DodCheck, DodReceipt, TapOut};
+pub use fallow::{fallow_audit, fallow_audit_with, FallowEvidence};
+pub use freeze::{freeze_candidate, AckLedger, CorrectionBudget, FrozenCandidate, RiskTier};

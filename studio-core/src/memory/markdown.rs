@@ -4,6 +4,8 @@ pub fn save(dir: &std::path::Path, name: &str, body: &str) -> Result<(), String>
     if name.contains('/') || name.contains("..") {
         return Err("refusing path escape in memory name".into());
     }
+    // L2 hard bounds (MEMORY.md ≤200 lines / 25KB).
+    super::summary::check_memory_md(body)?;
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     std::fs::write(dir.join(format!("{name}.md")), body).map_err(|e| e.to_string())
 }

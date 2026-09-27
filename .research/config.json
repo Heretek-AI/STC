@@ -1,0 +1,32 @@
+{
+  "search_engine": "duckduckgo",
+  "max_iterations": 10,
+  "divergence_threshold": 0.75,
+  "mode": "research",
+  "cache_raw_markdown": true,
+  "license_whitelist": [
+    "MIT",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "ISC"
+  ],
+  "output_dir": ".research",
+  "allocation": "dag",
+  "domain_pack": null,
+  "agents": {
+    "alpha": {
+      "backend": [
+        "claude",
+        "-p"
+      ],
+      "model": null
+    },
+    "beta": {
+      "backend": [
+        "claude",
+        "-p"
+      ],
+      "model": null
+    }
+  }
+}

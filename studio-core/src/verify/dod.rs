@@ -16,6 +16,8 @@ pub struct DodCheck {
     /// Evidence: green tests + syntax pass must both be true to land.
     pub tests_green: bool,
     pub syntax_ok: bool,
+    /// Diagnostics budget: fallow audit (TS/JS) + lints show zero NEW errors.
+    pub diagnostics_budget_ok: bool,
     /// Scope completion: files_done / files_planned (2/7 = 0.29 => refuse).
     pub files_done: usize,
     pub files_planned: usize,
@@ -160,6 +162,9 @@ pub fn evaluate_done(check: &DodCheck) -> DodReceipt {
     if !check.syntax_ok {
         reasons.push("syntax check failed".into());
     }
+    if !check.diagnostics_budget_ok {
+        reasons.push("diagnostics budget exceeded (new findings)".into());
+    }
 
     let verdict = if reasons.is_empty() {
         TapOut::Done
@@ -185,6 +190,7 @@ mod tests {
             message: "implemented feature".into(),
             tests_green: true,
             syntax_ok: true,
+            diagnostics_budget_ok: true,
             files_done: 5,
             files_planned: 5,
         }
@@ -206,6 +212,7 @@ mod tests {
             message: "Here's what's next: finish b.rs".into(),
             tests_green: true,
             syntax_ok: true,
+            diagnostics_budget_ok: true,
             files_done: 2,
             files_planned: 7,
         };

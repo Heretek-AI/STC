@@ -27,22 +27,61 @@ pub struct ProcessSpec {
     pub cwd: PathBuf,
     pub timeout: Duration,
     pub max_output: usize,
+    /// Env overlay applied on top of the inherited environment.
+    /// Lane isolation uses per-lane config dirs here; full env sanitization
+    /// (clear + allowlist) is future work, not silent behavior.
+    pub env: Vec<(String, String)>,
 }
 
 impl ProcessSpec {
     pub fn new(program: &str, args: Vec<String>, cwd: PathBuf) -> Self {
-        Self { program: program.into(), args, cwd, timeout: DEFAULT_TIMEOUT, max_output: MAX_OUTPUT_BYTES }
+        Self {
+            program: program.into(),
+            args,
+            cwd,
+            timeout: DEFAULT_TIMEOUT,
+            max_output: MAX_OUTPUT_BYTES,
+            env: vec![],
+        }
     }
 }
 
 /// Array-form spawn only (never shell-string). Kills child on timeout / overflow.
 pub async fn run_process(spec: ProcessSpec) -> Result<Vec<u8>, RunError> {
+    let out = run_process_unchecked(spec).await?;
+    if !out.success {
+        // bounded tail in error
+        let tail: String = String::from_utf8_lossy(&out.bytes)
+            .chars()
+            .take(500)
+            .collect();
+        return Err(RunError::Spawn(format!(
+            "exit {}: {tail}",
+            out.code.unwrap_or(-1)
+        )));
+    }
+    Ok(out.bytes)
+}
+
+/// Same chokepoint, but exit status is data, not error. For tools like
+/// `fallow audit` where exit 1 (findings) is a normal outcome.
+pub struct RunOutput {
+    pub success: bool,
+    pub code: Option<i32>,
+    pub bytes: Vec<u8>,
+}
+
+pub async fn run_process_unchecked(spec: ProcessSpec) -> Result<RunOutput, RunError> {
     // deny shell indirection outright
     if ["sh", "bash", "zsh", "fish", "cmd", "powershell"].contains(&spec.program.as_str()) {
-        return Err(RunError::Denied(format!("shell:false chokepoint rejects {}", spec.program)));
+        return Err(RunError::Denied(format!(
+            "shell:false chokepoint rejects {}",
+            spec.program
+        )));
     }
     let mut cmd = tokio::process::Command::new(&spec.program);
     cmd.args(&spec.args).current_dir(&spec.cwd);
+    cmd.envs(spec.env.iter().map(|(k, v)| (k, v)));
     cmd.stdin(std::process::Stdio::null());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
@@ -62,12 +101,11 @@ pub async fn run_process(spec: ProcessSpec) -> Result<Vec<u8>, RunError> {
                 buf.truncate(max);
                 return Err(RunError::Overflow(max));
             }
-            if !o.status.success() {
-                // bounded stderr tail in error
-                let tail: String = String::from_utf8_lossy(&buf).chars().take(500).collect();
-                return Err(RunError::Spawn(format!("exit {}: {tail}", o.status)));
-            }
-            Ok(buf)
+            Ok(RunOutput {
+                success: o.status.success(),
+                code: o.status.code(),
+                bytes: buf,
+            })
         }
     }
 }
@@ -78,7 +116,11 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_shell() {
-        let spec = ProcessSpec::new("bash", vec!["-c".into(), "echo hi".into()], std::env::temp_dir());
+        let spec = ProcessSpec::new(
+            "bash",
+            vec!["-c".into(), "echo hi".into()],
+            std::env::temp_dir(),
+        );
         assert!(matches!(run_process(spec).await, Err(RunError::Denied(_))));
     }
 

@@ -9,7 +9,15 @@ use thiserror::Error;
 pub enum StateError {
     #[error("sqlite: {0}")]
     Sqlite(#[from] rusqlite::Error),
+    #[error("migration: {0}")]
+    Migrate(#[from] crate::migrate::MigrateError),
+    #[error("io: {0}")]
+    Io(String),
 }
+
+/// Current schema version. v1 = Phase 0–5 baseline (incl. billed_kind,
+/// change_log triggers); v2 = WS4 indexes.
+pub const SCHEMA_VERSION: i64 = 2;
 
 pub struct StateStore {
     conn: Connection,
@@ -19,30 +27,114 @@ impl StateStore {
     pub fn open_in_memory() -> Result<Self, StateError> {
         let conn = Connection::open_in_memory()?;
         let s = Self { conn };
-        s.migrate()?;
+        s.migrate(None)?;
         Ok(s)
     }
 
     pub fn open(path: &str) -> Result<Self, StateError> {
         let conn = Connection::open(path)?;
         let s = Self { conn };
-        s.migrate()?;
+        s.migrate(Self::backup_sibling(path))?;
         Ok(s)
     }
 
-    fn migrate(&self) -> Result<(), StateError> {
-        self.conn.execute_batch(
-            "PRAGMA journal_mode=WAL;
+    /// `<db>.bak.<millis>` sibling for pre-migration snapshots.
+    /// Public so sibling stores (memory) share one backup convention.
+    pub fn backup_sibling_for(path: &str) -> Option<std::path::PathBuf> {
+        Self::backup_sibling(path)
+    }
+
+    fn backup_sibling(path: &str) -> Option<std::path::PathBuf> {
+        let p = std::path::Path::new(path);
+        let name = p.file_name()?.to_string_lossy().to_string();
+        let ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        Some(p.with_file_name(format!("{name}.bak.{ms}")))
+    }
+
+    pub fn schema_version(&self) -> Result<i64, StateError> {
+        Ok(crate::migrate::current_version(&self.conn)?)
+    }
+
+    /// Online snapshot: `VACUUM INTO dest` (works on a live WAL database).
+    pub fn backup_to(&self, dest: &std::path::Path) -> Result<(), StateError> {
+        if let Some(p) = dest.parent() {
+            std::fs::create_dir_all(p).map_err(|e| StateError::Io(e.to_string()))?;
+        }
+        let sql = format!(
+            "VACUUM INTO '{}'",
+            dest.to_string_lossy().replace('\'', "''")
+        );
+        self.conn.execute_batch(&sql)?;
+        Ok(())
+    }
+
+    /// All receipts for export (evidence JSON included verbatim).
+    pub fn export_receipts(&self) -> Result<Vec<crate::projection::ReceiptRow>, StateError> {
+        Ok(self.snapshot()?.receipts)
+    }
+
+    fn migrate(&self, backup: Option<std::path::PathBuf>) -> Result<(), StateError> {
+        self.migrate_legacy_repair()?;
+        crate::migrate::run_migrations(
+            &self.conn,
+            SCHEMA_VERSION,
+            &Self::steps(),
+            backup.as_deref(),
+        )?;
+        Ok(())
+    }
+
+    fn steps() -> Vec<crate::migrate::Migration> {
+        use crate::migrate::Migration;
+        vec![
+            Migration {
+                version: 1,
+                name: "phase0-5 baseline",
+                sql: "PRAGMA journal_mode=WAL;
              CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY, parent_id TEXT, kind TEXT, intent_hash TEXT, scope_hash TEXT, status TEXT, depends_on TEXT);
              CREATE TABLE IF NOT EXISTS claims(scope_hash TEXT PRIMARY KEY, owner TEXT);
              CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, payload TEXT);
              CREATE TABLE IF NOT EXISTS receipts(id TEXT PRIMARY KEY, task_id TEXT, kind TEXT, evidence TEXT);
-             CREATE TABLE IF NOT EXISTS token_ledger(seq INTEGER PRIMARY KEY AUTOINCREMENT, session TEXT, amount INTEGER, cache_hit INTEGER);
+             CREATE TABLE IF NOT EXISTS token_ledger(seq INTEGER PRIMARY KEY AUTOINCREMENT, session TEXT, amount INTEGER, cache_hit INTEGER, billed_kind TEXT NOT NULL DEFAULT 'api_key');
              CREATE TABLE IF NOT EXISTS merges(id TEXT PRIMARY KEY, status TEXT, detail TEXT);
              CREATE TABLE IF NOT EXISTS change_log(seq INTEGER PRIMARY KEY AUTOINCREMENT, tbl TEXT, row TEXT, op TEXT, old TEXT, new TEXT);
              CREATE TRIGGER IF NOT EXISTS trg_tasks_log AFTER INSERT ON tasks BEGIN INSERT INTO change_log(tbl,row,op,new) VALUES('tasks',NEW.id,'insert',NEW.status); END;
              CREATE TRIGGER IF NOT EXISTS trg_tasks_upd AFTER UPDATE OF status ON tasks BEGIN INSERT INTO change_log(tbl,row,op,old,new) VALUES('tasks',NEW.id,'update',OLD.status,NEW.status); END;",
+            },
+            Migration {
+                version: 2,
+                name: "ws4 scoreboard/poll indexes",
+                sql: "CREATE INDEX IF NOT EXISTS idx_token_ledger_session ON token_ledger(session);
+             CREATE INDEX IF NOT EXISTS idx_receipts_task ON receipts(task_id);
+             CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);",
+            },
+        ]
+    }
+
+    /// Repair for pre-Phase-6 databases created before billed_kind existed.
+    /// Tolerant: fresh databases have no tables yet when this runs.
+    fn migrate_legacy_repair(&self) -> Result<(), StateError> {
+        let has_table: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='token_ledger'",
+            [],
+            |r| r.get(0),
         )?;
+        if has_table == 0 {
+            return Ok(());
+        }
+        let has_billed: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('token_ledger') WHERE name='billed_kind'",
+            [],
+            |r| r.get(0),
+        )?;
+        if has_billed == 0 {
+            self.conn.execute_batch(
+                "ALTER TABLE token_ledger ADD COLUMN billed_kind TEXT NOT NULL DEFAULT 'api_key';",
+            )?;
+        }
         Ok(())
     }
 
@@ -160,16 +252,19 @@ impl StateStore {
     }
 
     /// Append-only token ledger. Never update cumulative counters; cache hits tracked separately.
-    pub fn record_tokens(
+    /// `billed_kind` records how the spend was billed (e.g. `subscription`,
+    /// `per_token`) and is allowed to flip subscription→overage across rows.
+    pub fn record_tokens_billed(
         &self,
         session: &str,
         amount: i64,
         cache_hit: bool,
+        billed_kind: &str,
     ) -> Result<(), StateError> {
         self.conn.execute_batch("BEGIN IMMEDIATE;")?;
         let r = self.conn.execute(
-            "INSERT INTO token_ledger(session, amount, cache_hit) VALUES(?,?,?)",
-            params![session, amount, cache_hit as i32],
+            "INSERT INTO token_ledger(session, amount, cache_hit, billed_kind) VALUES(?,?,?,?)",
+            params![session, amount, cache_hit as i32, billed_kind],
         );
         match r {
             Ok(_) => {
@@ -181,6 +276,15 @@ impl StateStore {
                 Err(e.into())
             }
         }
+    }
+
+    pub fn record_tokens(
+        &self,
+        session: &str,
+        amount: i64,
+        cache_hit: bool,
+    ) -> Result<(), StateError> {
+        self.record_tokens_billed(session, amount, cache_hit, "api_key")
     }
 
     pub fn lifetime_spend(&self) -> Result<i64, StateError> {
@@ -223,5 +327,49 @@ mod tests {
         assert_eq!(s.lifetime_spend().unwrap(), 100);
         s.record_tokens("a", 25, false).unwrap();
         assert_eq!(s.lifetime_spend().unwrap(), 125);
+    }
+
+    #[test]
+    fn legacy_db_upgrades_with_backup() {
+        // Simulate a pre-Phase-6 database: old schema, no billed_kind, version 0.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("studio.db");
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE token_ledger(seq INTEGER PRIMARY KEY AUTOINCREMENT, session TEXT, amount INTEGER, cache_hit INTEGER);",
+            )
+            .unwrap();
+        }
+        let before: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(!before.iter().any(|n| n.contains(".bak.")));
+        let s = StateStore::open(path.to_str().unwrap()).unwrap();
+        assert_eq!(s.schema_version().unwrap(), SCHEMA_VERSION);
+        // Billed writes work post-upgrade (repair + migration converged).
+        s.record_tokens_billed("a", 10, false, "subscription")
+            .unwrap();
+        // A pre-migration backup snapshot exists.
+        let after: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(
+            after.iter().any(|n| n.contains(".bak.")),
+            "VACUUM INTO backup missing: {after:?}"
+        );
+    }
+
+    #[test]
+    fn refuses_newer_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("studio.db");
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute_batch("PRAGMA user_version = 999").unwrap();
+        }
+        assert!(StateStore::open(path.to_str().unwrap()).is_err());
     }
 }

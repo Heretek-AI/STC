@@ -1,0 +1,19 @@
+# DEV-MODE OVERRIDE — privileged, root-equivalent, local dev ONLY.
+# Apply explicitly: docker compose -f compose.yaml -f compose.override.dev.yaml up
+# The manager prints a banner on every privileged-dev launch and the cockpit
+# shows a persistent badge while dev-mode is reported. Never use with untrusted
+# prompts or on shared machines. Each escalation below is commented: remove any
+# line you do not need rather than broadening what lanes can reach.
+name: studio
+
+services:
+  lane:
+    # SOCKET MOUNT: lanes reaching this socket are root on the host.
+    # Required only for lanes that must spawn sibling containers.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Host network: removes container network isolation for debugging only.
+    # network_mode: host
+    # Privileged: disables ALL container protections. Prefer scoped
+    # --cap-add / --device entries over this sledgehammer.
+    # privileged: true

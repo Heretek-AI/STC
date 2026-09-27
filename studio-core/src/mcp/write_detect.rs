@@ -76,11 +76,7 @@ pub fn detect_shell_writes(cmd: &str) -> Vec<WriteTarget> {
         }
     }
     // inplace_edit: sed -i, perl -i, ed
-    if ["sed", "perl", "ed"]
-        .iter()
-        .any(|s| tokens.contains(s))
-        && tokens.contains(&"-i")
-    {
+    if ["sed", "perl", "ed"].iter().any(|s| tokens.contains(s)) && tokens.contains(&"-i") {
         out.push(WriteTarget {
             category: WriteCategory::InplaceEdit,
             operator: "sed -i".into(),
@@ -111,8 +107,7 @@ pub fn detect_shell_writes(cmd: &str) -> Vec<WriteTarget> {
         });
     }
     // archive_extract: tar -x, unzip
-    if (tokens.contains(&"tar") && cmd.contains("-x")) || tokens.contains(&"unzip")
-    {
+    if (tokens.contains(&"tar") && cmd.contains("-x")) || tokens.contains(&"unzip") {
         out.push(WriteTarget {
             category: WriteCategory::ArchiveExtract,
             operator: tokens[0].into(),

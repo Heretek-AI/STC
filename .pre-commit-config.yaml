@@ -1,0 +1,43 @@
+# prek (pre-commit-compatible) gate config. Install: cargo install prek
+# then `prek install`. Budget: pre-commit <15s. Excludes the review/ corpus
+# (vendored audits) and build outputs (see .gitignore).
+exclude: ^review/|^.*/target/|node_modules/|\.AppDir/
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ['--maxkb=512']
+      - id: check-merge-conflict
+
+  - repo: local
+    hooks:
+      - id: rustfmt-check
+        name: rustfmt --check (studio-core, adapters, tui)
+        entry: cargo fmt --check
+        language: system
+        pass_filenames: false
+      - id: clippy-deny-warnings
+        name: clippy -D warnings (studio-core)
+        entry: bash -c 'cd studio-core && cargo clippy --all-targets -- -D warnings'
+        language: system
+        pass_filenames: false
+      - id: gitleaks-staged
+        name: gitleaks protect staged
+        entry: gitleaks protect --staged --verbose
+        language: system
+        pass_filenames: false
+      - id: fallow-audit-ts
+        name: fallow audit changed TS/JS (new findings only)
+        entry: bash -c 'fallow audit --format compact --quiet'
+        language: system
+        files: '\.(ts|tsx|js|jsx|mjs|cjs)$'
+        pass_filenames: false
+      - id: gate-config-integrity
+        name: gate configs need CODEOWNERS review
+        entry: scripts/check-gate-configs.sh
+        language: script

@@ -30,7 +30,10 @@ pub enum WorktreeError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MergeOutcome {
     Merged,
-    ConflictRetained { conflict_files: Vec<String>, diagnostic: String },
+    ConflictRetained {
+        conflict_files: Vec<String>,
+        diagnostic: String,
+    },
 }
 
 /// Per-repo operation lock: serializes worktree mutations per repo root.
@@ -252,7 +255,10 @@ impl WorktreeManager {
 
     /// Crash recovery: `git worktree list --porcelain` minus known ledger paths = orphans.
     /// Unlocks + prunes orphans (idempotent). Returns reaped paths.
-    pub async fn recover(repo: &Path, known: &std::collections::HashSet<String>) -> Result<Vec<String>, WorktreeError> {
+    pub async fn recover(
+        repo: &Path,
+        known: &std::collections::HashSet<String>,
+    ) -> Result<Vec<String>, WorktreeError> {
         let listed = Self::list_worktrees(repo).await?;
         let mut reaped = vec![];
         for wt in listed {
@@ -284,7 +290,9 @@ impl WorktreeManager {
             .await
             .map_err(|e| WorktreeError::Io(e.to_string()))?;
         if !out.status.success() {
-            return Err(WorktreeError::Git(String::from_utf8_lossy(&out.stderr).to_string()));
+            return Err(WorktreeError::Git(
+                String::from_utf8_lossy(&out.stderr).to_string(),
+            ));
         }
         let mut out_v = vec![];
         for line in String::from_utf8_lossy(&out.stdout).lines() {
@@ -341,6 +349,9 @@ mod tests {
     #[test]
     fn trash_sweep_is_idempotent() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(WorktreeManager::sweep_trash(dir.path(), |_| false).unwrap(), 0);
+        assert_eq!(
+            WorktreeManager::sweep_trash(dir.path(), |_| false).unwrap(),
+            0
+        );
     }
 }

@@ -1,0 +1,42 @@
+# STC compose stack (Phase 6 WS4).
+# Topology (D-RUNTIME): the control plane (studio-core daemon, Tauri cockpit)
+# runs NATIVE on the host. Compose provides lane workers + persistent volumes.
+# Repos and worktrees are host-identical bind mounts; the engine owns all
+# `git worktree add/lock/prune`. Workers never receive docker.sock, ~/.ssh,
+# ~/.aws, ~/.gnupg, or the host keychain — short-TTL broker tokens only.
+#
+# Usage: `studio up` (wrapper) or `docker compose up -d`.
+# Dev-mode (socket-mounted, root-equivalent): add `-f compose.override.dev.yaml`.
+
+name: studio
+
+services:
+  lane:
+    build:
+      context: ./docker
+      dockerfile: Dockerfile.lane
+    image: studio-lane:latest
+    # Rootless-friendly: run as invoking user so worktree files match host.
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    working_dir: /workspace
+    volumes:
+      - ${STUDIO_REPO:-.}:/workspace:rw
+      - studio-harness:/opt/harness:rw
+      - studio-toolchains:/opt/toolchains:rw
+    environment:
+      STUDIO_LANE_RUNTIME: ${STUDIO_LANE_RUNTIME:-rootless}
+      GEMINI_FORCE_FILE_STORAGE: "true"
+    command: ["sleep", "infinity"]
+    profiles: ["lanes"]
+
+volumes:
+  # studio.db + WAL. Owner: engine. Survives image updates.
+  studio-state:
+  # Content-addressed sha256 evidence blobs. Owner: engine.
+  studio-evidence:
+  # Engine/scheduler/adapter JSONL, rotated. Owner: engine.
+  studio-logs:
+  # Per-harness config + auth, per-lane subdir. Owner: harness manager.
+  studio-harness:
+  # node/python/uv/rustup caches + model cache, read-only into workers.
+  studio-toolchains:

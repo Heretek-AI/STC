@@ -11,7 +11,9 @@ pub mod process;
 pub mod registry;
 pub mod write_detect;
 
-pub use registry::{Access, AgentRole, Gateway, RoleManifest, ToolDef, catalog, default_manifest, derive_tool_map};
 pub use overflow::{OverflowKv, OVERFLOW_TTL_SECS, WIRE_LIMIT_BYTES};
-pub use process::{ProcessSpec, RunError, run_process};
-pub use write_detect::{WriteCategory, WriteTarget, detect_shell_writes};
+pub use process::{run_process, ProcessSpec, RunError};
+pub use registry::{
+    catalog, default_manifest, derive_tool_map, Access, AgentRole, Gateway, RoleManifest, ToolDef,
+};
+pub use write_detect::{detect_shell_writes, WriteCategory, WriteTarget};

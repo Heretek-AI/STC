@@ -7,10 +7,14 @@
 pub mod lifecycle;
 pub mod markdown;
 pub mod retention;
+pub mod retrieve;
 pub mod semantic;
 pub mod store;
+pub mod summary;
 
 pub use lifecycle::LifecycleRow;
 pub use retention::{ReapReport, RetentionPolicy};
+pub use retrieve::{EngramBackend, FtsBackend, RetrieveBackend};
 pub use semantic::{RerankedHit, SemanticIndex};
 pub use store::MemoryStore;
+pub use summary::{estimate_tokens, fit_budget, AnchoredSummary};

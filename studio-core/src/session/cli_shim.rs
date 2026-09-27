@@ -44,6 +44,27 @@ impl LocalCliCapabilities {
                 durable_instructions: true,
                 permission_policies: vec!["deny-by-default".into()],
             },
+            // Verified live: `opencode run --continue/--session` = native
+            // session resume; instructions live in config (durable across
+            // processes); permission posture deny-by-default.
+            "opencode" => Self {
+                cli: cli.into(),
+                resume: ResumeStrategy::Native,
+                instruction_channel: InstructionChannel::SystemPrompt,
+                durable_instructions: true,
+                permission_policies: vec!["deny-by-default".into()],
+            },
+            // pi-family evidence (oh-my-pi agent-hub/advisor docs): sessions
+            // switch/resume with persisted artifacts re-discovered on resume.
+            // Instruction delivery varies across pi forks; bootstrap file is
+            // the portable channel. Downgrade, never guess, on variance.
+            "pi" => Self {
+                cli: cli.into(),
+                resume: ResumeStrategy::Native,
+                instruction_channel: InstructionChannel::BootstrapFile,
+                durable_instructions: true,
+                permission_policies: vec!["deny-by-default".into()],
+            },
             _ => Self {
                 cli: cli.into(),
                 resume: ResumeStrategy::None,
@@ -66,6 +87,14 @@ mod tests {
             ResumeStrategy::Native
         );
         assert!(LocalCliCapabilities::for_cli("codex").durable_instructions);
+        assert_eq!(
+            LocalCliCapabilities::for_cli("opencode").resume,
+            ResumeStrategy::Native
+        );
+        assert_eq!(
+            LocalCliCapabilities::for_cli("pi").resume,
+            ResumeStrategy::Native
+        );
         assert_eq!(
             LocalCliCapabilities::for_cli("other").resume,
             ResumeStrategy::None
