@@ -700,6 +700,31 @@ impl RolePack {
         manifest
     }
 
+    /// Asset output schema for creative roles (render/script + budget proof).
+    fn schema_asset() -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "required": ["summary", "artifacts", "verification"],
+            "properties": {
+                "summary": {"type": "string"},
+                "artifacts": {"type": "array", "items": {"type": "string"}},
+                "verification": {"type": "string"}
+            }
+        }))
+    }
+
+    /// Manifest extension helper (coder_web precedent): default base plus
+    /// OnDemand entries, least privilege not deny. No default-manifest churn.
+    fn extended(role: crate::mcp::AgentRole, extra: &[&str]) -> crate::mcp::RoleManifest {
+        let mut manifest = crate::mcp::default_manifest(role);
+        for t in extra {
+            manifest
+                .rules
+                .insert((*t).into(), crate::mcp::Access::OnDemand);
+        }
+        manifest
+    }
+
     /// #12 batch 2: QA/security remainder, spec §2.1–§2.5 (qa-director,
     /// security-auditor, test-synthesizer, perf-qa-engineer,
     /// accessibility-auditor). No catalog additions.
@@ -809,6 +834,360 @@ impl RolePack {
                     .into(),
                 manifest: researcher,
                 model_slot: "reviewer",
+                harness: "pi",
+                spawns: SpawnPolicy::Isolated,
+                output_schema: Self::schema_verdict(),
+            }),
+        ]
+    }
+
+    /// #12 batch 3: creative six + management five + operations four,
+    /// spec §3–§5. Shared creative constraints (source-of-record first,
+    /// deterministic re-render, asset budgets, pinned engine versions) and
+    /// management constraints (documents/decisions with owner + acceptance +
+    /// deadline-tick, explicit non-circular escalation) live in the prompts.
+    /// No catalog additions.
+    pub fn creative_management_ops_batch() -> Vec<Self> {
+        vec![
+            Self::batch_pack(BatchParts {
+                name: "blender-tech-artist",
+                tools: vec![
+                    "read".into(),
+                    "write".into(),
+                    "edit".into(),
+                    "runProcess".into(),
+                    "tool_open".into(),
+                    "kv_get".into(),
+                ],
+                prompt: "You are a Blender technical artist. Headless Blender Python (blender -b -P): \
+                rigging, UVs, scene automation; source-of-record first, deterministic re-render from the \
+                winning hash, never text-merge binaries, asset budgets declared (poly, draw-call, texture \
+                caps). Negative constraints: no hallucinated APIs, no secrets. Declare your verification \
+                strategy before acting (script, render proof, budget statement); verify-and-correct after. \
+                DoD: script + render proof + poly budget statement. Handoff to the qa-director for asset \
+                validation."
+                    .into(),
+                manifest: Self::coder_lens(),
+                model_slot: "creative",
+                harness: "pi",
+                spawns: SpawnPolicy::Isolated,
+                output_schema: Self::schema_asset(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "shader-specialist",
+                tools: vec![
+                    "read".into(),
+                    "write".into(),
+                    "edit".into(),
+                    "runProcess".into(),
+                    "tool_open".into(),
+                    "kv_get".into(),
+                ],
+                prompt: "You are a shader specialist (HLSL/GLSL vertex, fragment, compute). \
+                Source-of-record first; asset budgets declared; target profiles listed. Negative \
+                constraints: no hallucinated APIs, no secrets. Declare your verification strategy \
+                before acting (glslangValidator or tint run, profile matrix); verify-and-correct after. \
+                DoD: validator output + target profiles listed. Handoff to the qa-director."
+                    .into(),
+                manifest: Self::coder_lens(),
+                model_slot: "creative",
+                harness: "pi",
+                spawns: SpawnPolicy::Isolated,
+                output_schema: Self::schema_asset(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "godot-gameplay-programmer",
+                tools: vec![
+                    "read".into(),
+                    "write".into(),
+                    "edit".into(),
+                    "patch".into(),
+                    "runProcess".into(),
+                    "code_search".into(),
+                    "tool_open".into(),
+                    "kv_get".into(),
+                ],
+                prompt: "You are a Godot 4 gameplay programmer (GDScript/C# mechanics, state machines). \
+                Source-of-record first; engine version pinned; input map noted. Negative constraints: no \
+                hallucinated APIs, no secrets. Declare your verification strategy before acting (headless \
+                lint, scene smoke test); verify-and-correct after. DoD: lint + scene smoke test + input \
+                map note. Handoff to the test-synthesizer, then the qa-director."
+                    .into(),
+                manifest: Self::coder_lens(),
+                model_slot: "creative",
+                harness: "pi",
+                spawns: SpawnPolicy::Isolated,
+                output_schema: Self::schema_asset(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "procedural-mesh-generator",
+                tools: vec![
+                    "read".into(),
+                    "write".into(),
+                    "runProcess".into(),
+                    "tool_open".into(),
+                    "kv_get".into(),
+                ],
+                prompt: "You are a procedural mesh generator (Voronoi, marching cubes, L-systems). \
+                Meshes watertight and manifold; seed value recorded for reproducibility. Negative \
+                constraints: no hallucinated APIs, no secrets. Declare your verification strategy \
+                before acting (mesh stats, seed); verify-and-correct after. DoD: mesh stats \
+                (verts, tris, manifold) + seed value. Handoff to the qa-director."
+                    .into(),
+                manifest: Self::coder_lens(),
+                model_slot: "creative",
+                harness: "pi",
+                spawns: SpawnPolicy::Isolated,
+                output_schema: Self::schema_asset(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "audio-designer",
+                tools: vec![
+                    "read".into(),
+                    "write".into(),
+                    "runProcess".into(),
+                    "tool_open".into(),
+                    "kv_get".into(),
+                ],
+                prompt: "You are an audio designer (SFX, ambience). Analyze RMS, centroid, transients; \
+                state loudness targets. Negative constraints: no hallucinated APIs, no secrets. Declare \
+                your verification strategy before acting (waveform analysis, target conformance); \
+                verify-and-correct after. DoD: waveform analysis report + target conformance. Handoff to \
+                the qa-director."
+                    .into(),
+                manifest: Self::coder_lens(),
+                model_slot: "creative",
+                harness: "pi",
+                spawns: SpawnPolicy::Isolated,
+                output_schema: Self::schema_asset(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "tooling-asset-pipeline-engineer",
+                tools: vec![
+                    "read".into(),
+                    "write".into(),
+                    "edit".into(),
+                    "patch".into(),
+                    "runProcess".into(),
+                    "code_search".into(),
+                    "tool_open".into(),
+                    "kv_get".into(),
+                ],
+                prompt: "You are a tooling and asset-pipeline engineer (DCC-to-engine exports: FBX, \
+                glTF, USD) with automatic validation gates on sample assets. Negative constraints: no \
+                hallucinated APIs, no secrets. Declare your verification strategy before acting (pipeline \
+                run, validation report); verify-and-correct after. DoD: pipeline run log + validation \
+                report on sample assets. Handoff to the qa-director."
+                    .into(),
+                manifest: Self::coder_lens(),
+                model_slot: "creative",
+                harness: "pi",
+                spawns: SpawnPolicy::Isolated,
+                output_schema: Self::schema_asset(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "product-manager",
+                tools: vec![
+                    "read".into(),
+                    "tool_open".into(),
+                    "kv_get".into(),
+                    "plan_open".into(),
+                    "dag_commit".into(),
+                    "web_search".into(),
+                    "retrieve_docs".into(),
+                ],
+                prompt: "You are a product manager. Mission becomes PRD + epics + acceptance criteria; \
+                outputs are documents and decisions, never code. Every directive carries owner, acceptance \
+                criteria, and deadline-tick; escalation paths explicit, never circular. Negative \
+                constraints: no implementation directives, no hallucinated sources, no secrets. Declare \
+                your verification strategy before acting (stakeholder coverage, criteria testability); \
+                verify-and-correct after. DoD: PRD with acceptance criteria per epic, committed via \
+                dag_commit. Handoff to the systems-architect {prd}, then the scrum-dispatcher."
+                    .into(),
+                manifest: crate::mcp::default_manifest(crate::mcp::AgentRole::Manager),
+                model_slot: "manager",
+                harness: "omp",
+                spawns: SpawnPolicy::Supervised {
+                    inheritable_scopes: vec!["read".into(), "plan_open".into()],
+                },
+                output_schema: Self::schema_spec(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "scrum-dispatcher",
+                tools: vec![
+                    "read".into(),
+                    "tool_open".into(),
+                    "kv_get".into(),
+                    "plan_open".into(),
+                    "dag_commit".into(),
+                ],
+                prompt: "You are a scrum dispatcher. Task dispatch, deadlock detection, velocity \
+                tracking, token-budget arms per task. Outputs are dispatch decisions with owner and \
+                deadline-tick, never code. Negative constraints: no dispatch to dead DAG nodes, no \
+                secrets. Declare your verification strategy before acting (DAG liveness, budget heads); \
+                verify-and-correct after. DoD: dispatch receipts reference live DAG nodes; stalled tasks \
+                reaped with lease-expired-class receipts. Handoff to lane agents per DAG edges."
+                    .into(),
+                manifest: crate::mcp::default_manifest(crate::mcp::AgentRole::Manager),
+                model_slot: "manager",
+                harness: "omp",
+                spawns: SpawnPolicy::Supervised {
+                    inheritable_scopes: vec!["read".into(), "plan_open".into()],
+                },
+                output_schema: Self::schema_verdict(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "pr-gatekeeper",
+                tools: vec![
+                    "read".into(),
+                    "code_search".into(),
+                    "tool_open".into(),
+                    "kv_get".into(),
+                    "sast".into(),
+                ],
+                prompt: "You are a PR gatekeeper. Binary merge verdicts from evidence only (tests, \
+                lint-zero, security sign-off, burned ack); you cannot approve your own lanes' work. \
+                Negative constraints: no evidence-free approvals, no secrets. Declare your verification \
+                strategy before acting (evidence refs to check); verify-and-correct after. DoD: verdict \
+                object {approve|rewind, evidence_refs[], fix_tasks[]}. Handoff to the merge queue, or \
+                rewind to the scrum-dispatcher."
+                    .into(),
+                manifest: Self::reviewer_lens(),
+                model_slot: "reviewer",
+                harness: "omp",
+                spawns: SpawnPolicy::Isolated,
+                output_schema: Self::schema_verdict(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "release-engineer",
+                tools: vec![
+                    "read".into(),
+                    "runProcess".into(),
+                    "tool_open".into(),
+                    "kv_get".into(),
+                    "plan_open".into(),
+                ],
+                prompt: "You are a release engineer. Multi-repo releases, changelogs from conventional \
+                commits, semver calc, migration + monitoring checklist per release. Negative constraints: \
+                no unannounced breaking changes, no secrets. Declare your verification strategy before \
+                acting (smoke, changelog, migration, monitoring); verify-and-correct after. DoD: release \
+                checklist all evidenced. Handoff to the incident-commander on failure."
+                    .into(),
+                manifest: Self::extended(crate::mcp::AgentRole::Manager, &["runProcess"]),
+                model_slot: "manager",
+                harness: "pi",
+                spawns: SpawnPolicy::Isolated,
+                output_schema: Self::schema_verdict(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "tech-writer",
+                tools: vec![
+                    "read".into(),
+                    "write".into(),
+                    "edit".into(),
+                    "code_search".into(),
+                    "tool_open".into(),
+                    "kv_get".into(),
+                    "web_search".into(),
+                ],
+                prompt: "You are a technical writer. Docs accuracy, freshness, and TTFHW \
+                (time-to-first-hello-world) testing; link checking on every delta. Negative constraints: \
+                no stale screenshots-as-truth, no hallucinated flags, no secrets. Declare your \
+                verification strategy before acting (build, links, freshness stamp); verify-and-correct \
+                after. DoD: docs build clean + link check + freshness stamp. Handoff to the qa-director \
+                for the docs gate."
+                    .into(),
+                manifest: Self::extended(crate::mcp::AgentRole::Researcher, &["write", "edit"]),
+                model_slot: "researcher",
+                harness: "pi",
+                spawns: SpawnPolicy::Isolated,
+                output_schema: Self::schema_code(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "devops-sre",
+                tools: vec![
+                    "read".into(),
+                    "runProcess".into(),
+                    "code_search".into(),
+                    "tool_open".into(),
+                    "kv_get".into(),
+                    "plan_open".into(),
+                ],
+                prompt: "You are a DevOps/SRE engineer. CI/CD, IaC drift via terraform plan, deploy \
+                health plus auto-rollback triggers; SLOs stated per change. Terraform apply is denied to \
+                lanes (validate + plan only); any mutation needs a human approval object. Negative \
+                constraints: no direct prod writes, no secrets in lane env (broker tokens only). Declare \
+                your verification strategy before acting (plan artifact, health probes, rollback triggers); \
+                verify-and-correct after. DoD: plan artifact + health-probe definition + rollback trigger \
+                commands. Handoff to the release-engineer, then the incident-commander on breach."
+                    .into(),
+                manifest: Self::extended(
+                    crate::mcp::AgentRole::Manager,
+                    &["runProcess", "code_search"],
+                ),
+                model_slot: "manager",
+                harness: "pi",
+                spawns: SpawnPolicy::Supervised {
+                    inheritable_scopes: vec!["read".into(), "code_search".into()],
+                },
+                output_schema: Self::schema_verdict(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "incident-commander",
+                tools: vec![
+                    "read".into(),
+                    "code_search".into(),
+                    "tool_open".into(),
+                    "kv_get".into(),
+                    "web_search".into(),
+                ],
+                prompt: "You are an incident commander. Sev-1 triage: severity, blast radius, containment \
+                before root cause; status updates during, blameless RCA after. Negative constraints: no \
+                blame narratives, no secrets. Declare your verification strategy before acting (severity \
+                signals, containment checks); verify-and-correct after. DoD: incident record {severity, \
+                containment, RCA, action items}. Handoff to the scrum-dispatcher as tasks."
+                    .into(),
+                manifest: crate::mcp::default_manifest(crate::mcp::AgentRole::Researcher),
+                model_slot: "manager",
+                harness: "omp",
+                spawns: SpawnPolicy::Isolated,
+                output_schema: Self::schema_verdict(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "token-economist",
+                tools: vec!["read".into(), "tool_open".into(), "kv_get".into()],
+                prompt: "You are a token economist. Per-task token budgets, cost-per-feature, frugality \
+                thresholds; you read the ledger only and write nothing but reports. Negative \
+                constraints: no budget edits to hide overruns, no secrets. Declare your verification \
+                strategy before acting (ledger window, baseline); verify-and-correct after. DoD: budget \
+                report vs ledger; over-budget tasks flagged with cause class. Handoff to the \
+                scrum-dispatcher."
+                    .into(),
+                manifest: crate::mcp::default_manifest(crate::mcp::AgentRole::Researcher),
+                model_slot: "manager",
+                harness: "pi",
+                spawns: SpawnPolicy::Isolated,
+                output_schema: Self::schema_verdict(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "knowledge-curator",
+                tools: vec![
+                    "read".into(),
+                    "write".into(),
+                    "edit".into(),
+                    "code_search".into(),
+                    "tool_open".into(),
+                    "kv_get".into(),
+                ],
+                prompt: "You are a knowledge curator. Own memory hygiene: ontology, dedup, supersession \
+                links, veracity review; you never write code. Negative constraints: no silent pruning \
+                (every removal lands in the receipt), no secrets. Declare your verification strategy \
+                before acting (review set, budget); verify-and-correct after. DoD: curation receipt \
+                {reviewed, superseded[], pruned[]} within rung budgets. Handoff to the scrum-dispatcher, \
+                report only."
+                    .into(),
+                manifest: Self::extended(crate::mcp::AgentRole::Researcher, &["write", "edit"]),
+                model_slot: "researcher",
                 harness: "pi",
                 spawns: SpawnPolicy::Isolated,
                 output_schema: Self::schema_verdict(),
@@ -1340,7 +1719,11 @@ mod tests {
 
     #[test]
     fn pi_library_spawns_never_escalate() {
-        for pack in RolePack::pi_library() {
+        let mut all = RolePack::pi_library();
+        all.extend(RolePack::engineering_batch());
+        all.extend(RolePack::qa_batch());
+        all.extend(RolePack::creative_management_ops_batch());
+        for pack in &all {
             // No pack may grant write-class scopes to children beyond Isolated,
             // and Supervised packs inherit read-only scopes only.
             match &pack.spawns {
@@ -1411,6 +1794,38 @@ mod tests {
             for t in &pack.tools {
                 assert!(cat.contains(t), "{} uses unregistered tool {t}", pack.name);
             }
+        }
+    }
+
+    #[test]
+    fn creative_management_ops_batch_meets_flagship_bar() {
+        let cat = catalog();
+        let packs = RolePack::creative_management_ops_batch();
+        assert_eq!(packs.len(), 15);
+        let mut names: Vec<&str> = packs.iter().map(|p| p.name.as_str()).collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                "audio-designer",
+                "blender-tech-artist",
+                "devops-sre",
+                "godot-gameplay-programmer",
+                "incident-commander",
+                "knowledge-curator",
+                "pr-gatekeeper",
+                "procedural-mesh-generator",
+                "product-manager",
+                "release-engineer",
+                "scrum-dispatcher",
+                "shader-specialist",
+                "tech-writer",
+                "token-economist",
+                "tooling-asset-pipeline-engineer",
+            ]
+        );
+        for pack in &packs {
+            assert_pack_coherent(pack, &cat);
         }
     }
 

@@ -80,3 +80,25 @@ Same flagship bar via `RolePack::qa_batch()` +
 
 Reviewer lens = Reviewer manifest + code_search OnDemand. Provenance: prompts
 authored natively from the spec role text; no new catalog tools.
+
+## #12 batch 3: creative + management + operations (spec §3–§5)
+
+Same flagship bar via `RolePack::creative_management_ops_batch()` +
+`creative_management_ops_batch_meets_flagship_bar`. Shared spec constraints
+(source-of-record/asset budgets for creative; owner + acceptance +
+deadline-tick directives for management; approval objects for ops mutations)
+live in the prompts.
+
+| Pack | Slot | Harness |
+|---|---|---|
+| blender-tech-artist, shader-specialist, godot-gameplay-programmer, procedural-mesh-generator, audio-designer, tooling-asset-pipeline-engineer | `creative` | pi |
+| product-manager, scrum-dispatcher | `manager` | omp |
+| pr-gatekeeper | `reviewer` | omp |
+| release-engineer, tech-writer, devops-sre, token-economist, knowledge-curator | `manager`/`researcher` | pi |
+| incident-commander | `manager` | omp |
+
+Tool lenses: creative on coder lens; management on Manager manifest
+(release-engineer +runProcess, devops-sre +runProcess/code_search via the
+`extended()` helper); tech-writer/knowledge-curator on Researcher +write/edit.
+Provenance: prompts authored natively from the spec role text; no new catalog
+tools (H-C gate respected).
