@@ -16,11 +16,22 @@ the final file (seeded-defect pattern present = missed).
   round, burn ack JSON `{candidate_sha, loops: 1, verdict}`, final verify.
 - Metrics per task/lane: `loops`, `caught` (0/1).
 
-## Pilot result
+## Pilot result (2026-09-27, model opencode-go/deepseek-v4-flash)
 
-Task 1 smoke: both lanes 1 loop, caught=1 (generator fixed first try;
-reviewer approved with zero corrections). Full 2–4 run in background;
-results appended to the issue on completion.
+| Task | Live loops | Live caught | Frozen loops | Frozen caught |
+|---|---|---|---|---|
+| 1 mutable-default | 1 | 1 | 1 | 1 |
+| 2 off-by-one | 1 | 1 | 1 | 1 |
+| 3 eval-input | 1 | 1 | 1 | 1 |
+| 4 swallowed-except | 1 | 1 | 1 | 1 |
+
+Harness mechanics proven end to end (request→review→fix→verify→burn receipts,
+double-tap refusal, grep scoring). **No discriminative signal**: the generator
+fixed every seed first try and the reviewer approved with zero corrections, so
+loops=1 in both lanes — this says the tasks were too easy, not that the lanes
+tie. The 20-task verdict needs harder tasks (multi-defect, subtle logic) and a
+stricter reviewer checklist. Infra note: `opencode run` server children ignore
+TERM — harness uses `timeout -k 15 240`.
 
 ## Scale-up (for the 20-task verdict)
 
