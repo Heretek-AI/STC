@@ -8,10 +8,15 @@ Prerequisites: Docker, a homelab box or VPS (Strix Halo / DGX Spark-class for 24
 
 ```bash
 git clone https://github.com/Heretek-AI/STC && cd STC
-cp .env.example .env        # set STUDIO_LANE_RUNTIME, keys, repo path
+cargo run -q -p studio-cli -- init --repo .   # writes .env (rootless default)
 studio up                   # brings up the full compose stack
 studio logs --follow        # watch the agency work
 ```
+
+`studio init` refuses `privileged-dev` without typed confirmation and stamps
+whether the credential was live-pinged (wizard-written keys are marked
+NOT live-pinged — verify them in the cockpit Providers UI, which holds the
+live `/models` proof flow). Fallback: `cp .env.example .env` and edit by hand.
 
 Open the cockpit (WebUI beta) at the printed address, or run `studio-tui` for the terminal.
 

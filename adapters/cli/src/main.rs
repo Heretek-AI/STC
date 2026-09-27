@@ -1,5 +1,7 @@
 use clap::{Parser, Subcommand};
 
+mod init;
+
 #[derive(Parser)]
 #[command(name = "studio", about = "STC studio-core CLI")]
 struct Cli {
@@ -13,6 +15,28 @@ enum Cmd {
     Status {
         #[arg(long)]
         repo: String,
+    },
+    /// First-run onboarding wizard generating .env (rootless default, refuses privileged-dev)
+    Init {
+        #[arg(long, default_value = ".")]
+        repo: String,
+        #[arg(long, default_value = "rootless")]
+        runtime: String,
+        #[arg(long, default_value_t = false)]
+        confirm_privileged: bool,
+        #[arg(long, default_value = "opencode-go")]
+        preset: String,
+        #[arg(long)]
+        api_key: Option<String>,
+        #[arg(long, default_value_t = false)]
+        force: bool,
+        #[arg(long, default_value_t = false)]
+        non_interactive: bool,
+        /// Attempt a credential live-ping. Fails closed: the CLI ships no
+        /// HTTP client yet, so this always errors with an actionable stub
+        /// message instead of claiming an unverified Connected.
+        #[arg(long, default_value_t = false)]
+        ping: bool,
     },
     /// Follow logs (CDC change_log tail)
     Logs {
@@ -56,6 +80,28 @@ enum Cmd {
 async fn main() {
     let cli = Cli::parse();
     match cli.cmd {
+        Cmd::Init {
+            repo,
+            runtime,
+            confirm_privileged,
+            preset,
+            api_key,
+            force,
+            non_interactive,
+            ping,
+        } => {
+            cmd_init(InitArgs {
+                repo,
+                runtime,
+                confirm_privileged,
+                preset,
+                api_key,
+                force,
+                non_interactive,
+                ping,
+            })
+            .await;
+        }
         Cmd::Status { repo } => {
             let repo_p = std::path::Path::new(&repo);
             match studio_core::worktree::WorktreeManager::list_worktrees(repo_p).await {
@@ -252,6 +298,129 @@ async fn cmd_up(dev: bool, repo: Option<String>) {
         Ok(s) if s.success() => println!("studio up (dev={dev})"),
         _ => {
             eprintln!("studio up failed: is docker installed and running?");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Grouped `studio init` arguments (keeps `cmd_init` under the arg-count lint).
+struct InitArgs {
+    repo: String,
+    runtime: String,
+    confirm_privileged: bool,
+    preset: String,
+    api_key: Option<String>,
+    force: bool,
+    non_interactive: bool,
+    ping: bool,
+}
+
+async fn cmd_init(args: InitArgs) {
+    let InitArgs {
+        repo,
+        runtime,
+        mut confirm_privileged,
+        preset,
+        mut api_key,
+        force,
+        non_interactive,
+        ping,
+    } = args;
+    let repo_path = std::path::PathBuf::from(&repo);
+    let mut chosen_runtime = match init::LaneRuntime::parse(&runtime) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("init error: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    if !non_interactive {
+        use std::io::{stdin, stdout, Write};
+        println!("=== STC First-Run Setup Wizard ===");
+        println!("Target repository path: {}", repo_path.display());
+
+        print!("Choose lane runtime [rootless (default) | privileged-dev]: ");
+        let _ = stdout().flush();
+        let mut line = String::new();
+        if stdin().read_line(&mut line).is_ok() && !line.trim().is_empty() {
+            match init::LaneRuntime::parse(&line) {
+                Ok(r) => chosen_runtime = r,
+                Err(e) => {
+                    eprintln!("Invalid choice: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        if chosen_runtime == init::LaneRuntime::PrivilegedDev && !confirm_privileged {
+            println!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+            println!("WARNING: privileged-dev grants containers root access to host via socket.");
+            println!("Local development only. Never run with untrusted prompts.");
+            println!("Type 'I UNDERSTAND THE RISKS' to confirm:");
+            print!("> ");
+            let _ = stdout().flush();
+            let mut conf = String::new();
+            if stdin().read_line(&mut conf).is_ok() {
+                let trimmed = conf.trim();
+                if trimmed == "I UNDERSTAND THE RISKS" || trimmed == "yes" {
+                    confirm_privileged = true;
+                    println!("privileged-dev confirmed.");
+                } else {
+                    eprintln!("Refusing privileged-dev: confirmation did not match. Aborting.");
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        if api_key.is_none() {
+            print!("Enter OPENCODE_API_KEY (optional, press Enter to skip): ");
+            let _ = stdout().flush();
+            let mut k = String::new();
+            if stdin().read_line(&mut k).is_ok() && !k.trim().is_empty() {
+                api_key = Some(k.trim().to_string());
+            }
+        }
+    }
+
+    let model_preset = init::ModelPreset::parse(&preset);
+    if ping {
+        eprintln!("init failed: {}", model_preset.live_ping_stub_error());
+        std::process::exit(1);
+    }
+    let has_key = api_key.as_deref().is_some_and(|k| !k.trim().is_empty());
+    let config = init::InitConfig {
+        repo_path,
+        runtime: chosen_runtime,
+        privileged_confirmed: confirm_privileged,
+        model_preset,
+        api_key,
+    };
+
+    let rendered = match init::EnvWriter::validate_and_render(&config) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("init failed: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let dest = std::path::Path::new(".env");
+    match init::EnvWriter::write_env_file(dest, &rendered, force) {
+        Ok(_) => {
+            println!(
+                "Successfully generated .env (runtime={})",
+                chosen_runtime.as_str()
+            );
+            if has_key {
+                println!(
+                    "Credential written but NOT live-pinged: verify it in the cockpit Providers UI."
+                );
+            }
+            println!("Next step: run `studio up` to start the lane runtime.");
+        }
+        Err(e) => {
+            eprintln!("Failed to write .env: {e}");
             std::process::exit(1);
         }
     }
