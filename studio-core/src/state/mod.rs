@@ -16,8 +16,8 @@ pub enum StateError {
 }
 
 /// Current schema version. v1 = Phase 0–5 baseline (incl. billed_kind,
-/// change_log triggers); v2 = WS4 indexes.
-pub const SCHEMA_VERSION: i64 = 2;
+/// change_log triggers); v2 = WS4 indexes; v3 = #8 project autonomy table.
+pub const SCHEMA_VERSION: i64 = 3;
 
 pub struct StateStore {
     conn: Connection,
@@ -111,6 +111,11 @@ impl StateStore {
              CREATE INDEX IF NOT EXISTS idx_receipts_task ON receipts(task_id);
              CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);",
             },
+            Migration {
+                version: 3,
+                name: "issue-8 project autonomy dial",
+                sql: "CREATE TABLE IF NOT EXISTS project_autonomy(repo TEXT PRIMARY KEY, mode TEXT NOT NULL DEFAULT 'full');",
+            },
         ]
     }
 
@@ -136,6 +141,45 @@ impl StateStore {
             )?;
         }
         Ok(())
+    }
+
+    /// Persist the per-project autonomy mode (issue #8). Unknown mode strings
+    /// are rejected; reads fail closed to advisory on corrupt values.
+    pub fn set_autonomy(
+        &self,
+        repo: &str,
+        mode: crate::scheduler::autonomy::Autonomy,
+    ) -> Result<(), StateError> {
+        self.conn.execute(
+            "INSERT INTO project_autonomy(repo,mode) VALUES(?,?)
+             ON CONFLICT(repo) DO UPDATE SET mode=excluded.mode",
+            params![repo, mode.as_str()],
+        )?;
+        Ok(())
+    }
+
+    /// Read the per-project autonomy mode. Missing rows default to full
+    /// authority (grill decision); corrupt values fail closed to advisory.
+    pub fn get_autonomy(
+        &self,
+        repo: &str,
+    ) -> Result<crate::scheduler::autonomy::Autonomy, StateError> {
+        let mode: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT mode FROM project_autonomy WHERE repo=?",
+                params![repo],
+                |r| r.get(0),
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                other => Err(other),
+            })?;
+        Ok(match mode {
+            None => crate::scheduler::autonomy::Autonomy::default_for_new_project(),
+            Some(m) => crate::scheduler::autonomy::Autonomy::parse(&m),
+        })
     }
 
     /// Upsert a task (Manager scope -> DAG commit path). Idempotent on id.
@@ -240,6 +284,10 @@ impl StateStore {
             .query_row("SELECT MAX(seq) FROM change_log", [], |r| r.get(0))
             .unwrap_or(None);
         let age_ms = t0.elapsed().map(|d| d.as_millis() as u64).unwrap_or(0);
+        let autonomy_mode = self
+            .get_autonomy(&crate::scheduler::autonomy::repo_key_from_env())
+            .map(|a| a.as_str().to_string())
+            .unwrap_or_else(|_| "advisory".into());
         Ok(crate::projection::Snapshot {
             db_age_ms: age_ms,
             source: "studio.db".into(),
@@ -249,6 +297,7 @@ impl StateStore {
             burn,
             change_seq: change_seq.unwrap_or(0),
             runtime_mode: crate::projection::runtime_mode_from_env(),
+            autonomy_mode,
         })
     }
 
@@ -372,5 +421,41 @@ mod tests {
             conn.execute_batch("PRAGMA user_version = 999").unwrap();
         }
         assert!(StateStore::open(path.to_str().unwrap()).is_err());
+    }
+
+    #[test]
+    fn autonomy_defaults_full_persists_per_repo() {
+        use crate::scheduler::autonomy::Autonomy;
+        let s = StateStore::open_in_memory().unwrap();
+        assert_eq!(s.schema_version().unwrap(), SCHEMA_VERSION);
+        // Missing row: full authority (grill default).
+        assert_eq!(s.get_autonomy("/repo/a").unwrap(), Autonomy::Full);
+        s.set_autonomy("/repo/a", Autonomy::Advisory).unwrap();
+        assert_eq!(s.get_autonomy("/repo/a").unwrap(), Autonomy::Advisory);
+        // Per-repo isolation.
+        assert_eq!(s.get_autonomy("/repo/b").unwrap(), Autonomy::Full);
+        s.set_autonomy("/repo/b", Autonomy::Full).unwrap();
+        assert_eq!(s.get_autonomy("/repo/a").unwrap(), Autonomy::Advisory);
+        // Snapshot carries the STUDIO_REPO mode.
+        unsafe {
+            std::env::set_var("STUDIO_REPO", "/repo/a");
+        }
+        assert_eq!(s.snapshot().unwrap().autonomy_mode, "advisory");
+        unsafe {
+            std::env::remove_var("STUDIO_REPO");
+        }
+    }
+
+    #[test]
+    fn autonomy_corrupt_value_fails_closed() {
+        use crate::scheduler::autonomy::Autonomy;
+        let s = StateStore::open_in_memory().unwrap();
+        s.conn
+            .execute(
+                "INSERT INTO project_autonomy(repo,mode) VALUES('r','root-equivalent')",
+                [],
+            )
+            .unwrap();
+        assert_eq!(s.get_autonomy("r").unwrap(), Autonomy::Advisory);
     }
 }

@@ -29,6 +29,15 @@ New projects start at **full authority**: the LLM manager negotiates scope with 
 
 Prefer supervision? Turn the dial to **advisory**: scope decisions, dispatches, and merges pause for your approval (desktop, TUI, or phone via the approval relay). Per-project setting, remembered per repo.
 
+```bash
+studio autonomy --db studio.db --repo .                  # show current mode
+studio autonomy --db studio.db --repo . --mode advisory  # pause for approval
+```
+
+Destructive ops (deploy, secret rotation, infra mutation, incident-resolve)
+always require explicit approval in both modes. The cockpit header and TUI
+status line show the live mode.
+
 ## How work flows
 
 `scope → DAG → dispatch → review → merge`, driven from the cockpit:

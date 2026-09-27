@@ -72,6 +72,16 @@ fn render(f: &mut Frame, view: View, snap: &studio_core::projection::Snapshot) {
     } else {
         Color::DarkGray
     };
+    let autonomy_label = if snap.autonomy_mode == "advisory" {
+        " · ADVISORY (pauses for approval)".to_string()
+    } else {
+        " · full authority".to_string()
+    };
+    let autonomy_color = if snap.autonomy_mode == "advisory" {
+        Color::Yellow
+    } else {
+        Color::DarkGray
+    };
     let header = Paragraph::new(Line::from(vec![
         Span::styled(
             "STUDIO ",
@@ -93,6 +103,7 @@ fn render(f: &mut Frame, view: View, snap: &studio_core::projection::Snapshot) {
         ),
         Span::styled(snap.stale_badge(), Style::default().fg(Color::DarkGray)),
         Span::styled(runtime_label, Style::default().fg(runtime_color)),
+        Span::styled(autonomy_label, Style::default().fg(autonomy_color)),
     ]))
     .block(Block::default().borders(Borders::ALL));
     f.render_widget(header, chunks[0]);
@@ -204,6 +215,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 burn: vec![],
                 change_seq: 0,
                 runtime_mode: studio_core::projection::runtime_mode_from_env(),
+                autonomy_mode: "full".into(),
             });
         terminal.draw(|f| render(f, view, &snap))?;
         if event::poll(std::time::Duration::from_millis(POLL_MS))? {

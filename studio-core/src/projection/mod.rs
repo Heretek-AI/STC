@@ -59,6 +59,9 @@ pub struct Snapshot {
     /// `privileged-dev` only via explicit override). Cockpit renders a
     /// persistent dev-mode badge from this; UI never owns it.
     pub runtime_mode: String,
+    /// Manager autonomy mode for `STUDIO_REPO` (`full` default, `advisory`
+    /// pauses scope/dispatch/merge). Read projection of `project_autonomy`.
+    pub autonomy_mode: String,
 }
 
 /// Resolve the lane runtime mode from the environment (fail closed to
@@ -105,6 +108,7 @@ mod tests {
             burn: vec![],
             change_seq: 0,
             runtime_mode: "rootless".into(),
+            autonomy_mode: "full".into(),
         };
         assert!(s.stale_badge().contains("studio.db"));
     }

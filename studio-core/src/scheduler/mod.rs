@@ -4,6 +4,7 @@
 //! registry (surface exposure matrix).
 
 pub mod actions;
+pub mod autonomy;
 
 use std::collections::{HashMap, VecDeque};
 

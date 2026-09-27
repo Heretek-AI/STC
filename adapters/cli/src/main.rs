@@ -74,6 +74,17 @@ enum Cmd {
         #[arg(long)]
         repo: Option<String>,
     },
+    /// Get or set the per-project autonomy dial (advisory ↔ full, default
+    /// full). Advisory pauses scope/dispatch/merge for approval; destructive
+    /// ops always require approval regardless of mode.
+    Autonomy {
+        #[arg(long)]
+        db: String,
+        #[arg(long)]
+        repo: String,
+        #[arg(long)]
+        mode: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -177,6 +188,47 @@ async fn main() {
             }
         }
         Cmd::Up { dev, repo } => cmd_up(dev, repo).await,
+        Cmd::Autonomy { db, repo, mode } => cmd_autonomy(&db, &repo, mode),
+    }
+}
+
+fn cmd_autonomy(db: &str, repo: &str, mode: Option<String>) {
+    let store = match studio_core::state::StateStore::open(db) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("open db failed: {e}");
+            std::process::exit(1);
+        }
+    };
+    match mode {
+        None => match store.get_autonomy(repo) {
+            Ok(m) => println!("autonomy {repo} {}", m.as_str()),
+            Err(e) => {
+                eprintln!("get autonomy failed: {e}");
+                std::process::exit(1);
+            }
+        },
+        Some(m) => {
+            let parsed = match m.trim().to_lowercase().as_str() {
+                "advisory" => studio_core::scheduler::autonomy::Autonomy::Advisory,
+                "full" => studio_core::scheduler::autonomy::Autonomy::Full,
+                other => {
+                    eprintln!(
+                        "invalid mode '{other}': expected 'advisory' or 'full' (refusing to guess)"
+                    );
+                    std::process::exit(1);
+                }
+            };
+            if let Err(e) = store.set_autonomy(repo, parsed) {
+                eprintln!("set autonomy failed: {e}");
+                std::process::exit(1);
+            }
+            let _ = store.append_event(
+                "autonomy.set",
+                &serde_json::json!({"repo": repo, "mode": parsed.as_str()}).to_string(),
+            );
+            println!("autonomy {repo} {}", parsed.as_str());
+        }
     }
 }
 

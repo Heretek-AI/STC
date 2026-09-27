@@ -8,6 +8,7 @@ import Providers from "./pages/Providers";
 type Snapshot = {
   db_age_ms: number;
   runtime_mode: string;
+  autonomy_mode: string;
   fleet: { id: string; kind: string; status: string; lane: string }[];
   stream: { seq: number; kind: string; payload: string }[];
   receipts: { id: string; task_id: string; kind: string; evidence: string }[];
@@ -63,6 +64,61 @@ function runtimeStyleKey(mode: string): string {
   return isDevMode(mode) ? "dev" : "rootless";
 }
 
+function isAdvisoryMode(mode: string): boolean {
+  return mode === "advisory";
+}
+
+function autonomyLabel(mode: string): string {
+  if (isAdvisoryMode(mode)) return "ADVISORY · pauses for approval";
+  return "full authority";
+}
+
+const AUTONOMY_STYLES: Record<string, CSSProperties> = {
+  advisory: {
+    border: "1px solid var(--status-building)",
+    color: "var(--status-building)",
+    borderRadius: 999,
+    padding: "1px 8px",
+    fontSize: 11,
+    marginLeft: 8,
+  },
+  full: {
+    border: "1px solid var(--border)",
+    color: "var(--text-dim)",
+    borderRadius: 999,
+    padding: "1px 8px",
+    fontSize: 11,
+    marginLeft: 8,
+  },
+};
+
+function autonomyStyleKey(mode: string): string {
+  return isAdvisoryMode(mode) ? "advisory" : "full";
+}
+
+function runtimeModeOf(snap: Snapshot): string {
+  if (snap.runtime_mode) return snap.runtime_mode;
+  return "rootless";
+}
+
+function autonomyModeOf(snap: Snapshot): string {
+  if (snap.autonomy_mode) return snap.autonomy_mode;
+  return "full";
+}
+
+function AutonomyBadge({ mode }: { mode: string }) {
+  const key = autonomyStyleKey(mode);
+  return (
+    <span
+      className={key === "advisory" ? "autonomy-advisory" : "autonomy-full"}
+      title="source: studio.db project_autonomy (per-project dial, default full)"
+      style={AUTONOMY_STYLES[key]}
+    >
+      {autonomyLabel(mode)}
+    </span>
+  );
+}
+
 function RuntimeBadge({ mode }: { mode: string }) {
   const key = runtimeStyleKey(mode);
   return (
@@ -98,7 +154,8 @@ export default function App() {
     <div>
       <header>
         <h1>STUDIO</h1> <StaleBadge ms={snap.db_age_ms} />
-        <RuntimeBadge mode={snap.runtime_mode ?? "rootless"} />
+        <RuntimeBadge mode={runtimeModeOf(snap)} />
+        <AutonomyBadge mode={autonomyModeOf(snap)} />
         <nav style={{ display: "flex", gap: 8, margin: "8px 0" }}>
           <button
             style={tabStyle(tab === "war-room")}
