@@ -30,3 +30,6 @@ cockpit/src-tauri/gen/
 .env
 .research
 .research/
+.research/*
+.research/sources/*
+.gitignore
