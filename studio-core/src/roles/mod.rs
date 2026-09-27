@@ -677,6 +677,144 @@ impl RolePack {
             }),
         ]
     }
+
+    fn schema_verdict() -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "required": ["summary", "verdict", "evidence_refs"],
+            "properties": {
+                "summary": {"type": "string"},
+                "verdict": {"type": "string"},
+                "evidence_refs": {"type": "array", "items": {"type": "string"}}
+            }
+        }))
+    }
+
+    /// Reviewer-lens manifest shared by QA/security roles (Reviewer base plus
+    /// semantic search on demand, read-only, least privilege not deny).
+    fn reviewer_lens() -> crate::mcp::RoleManifest {
+        let mut manifest = crate::mcp::default_manifest(crate::mcp::AgentRole::Reviewer);
+        manifest
+            .rules
+            .insert("code_search".into(), crate::mcp::Access::OnDemand);
+        manifest
+    }
+
+    /// #12 batch 2: QA/security remainder, spec §2.1–§2.5 (qa-director,
+    /// security-auditor, test-synthesizer, perf-qa-engineer,
+    /// accessibility-auditor). No catalog additions.
+    pub fn qa_batch() -> Vec<Self> {
+        let researcher = crate::mcp::default_manifest(crate::mcp::AgentRole::Researcher);
+        vec![
+            Self::batch_pack(BatchParts {
+                name: "qa-director",
+                tools: vec![
+                    "read".into(),
+                    "code_search".into(),
+                    "tool_open".into(),
+                    "kv_get".into(),
+                    "syntax_check".into(),
+                    "sast".into(),
+                    "sbom".into(),
+                ],
+                prompt: "You are the QA director. Define gates and own sign-off: block on red, \
+                never self-approve. Coverage delta >= 0, zero new error findings, SBOM attached. \
+                Negative constraints: no prose-only verdicts, no hallucinated APIs, no secrets. \
+                Declare your verification strategy before acting (gates to check, evidence to demand); \
+                verify-and-correct after. DoD: verdict object {approve|rewind, evidence_refs[], fix_tasks[]}. \
+                Handoff to the pr-gatekeeper {verdict, evidence}, or rewind with fix-tasks."
+                    .into(),
+                manifest: Self::reviewer_lens(),
+                model_slot: "reviewer",
+                harness: "omp",
+                spawns: SpawnPolicy::Supervised {
+                    inheritable_scopes: vec!["read".into(), "code_search".into()],
+                },
+                output_schema: Self::schema_verdict(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "security-auditor",
+                tools: vec![
+                    "read".into(),
+                    "code_search".into(),
+                    "tool_open".into(),
+                    "kv_get".into(),
+                    "sast".into(),
+                    "syntax_check".into(),
+                ],
+                prompt: "You are a security auditor. Run OWASP Top 10 + STRIDE against component \
+                diagrams; severity-rated findings with file:line:rule evidence, never prose-only \
+                verdicts. Semgrep Guardian findings are accepted as input evidence. Negative \
+                constraints: no hallucinated APIs, no secrets. Declare your verification strategy \
+                before acting (sast scope, checklist coverage); verify-and-correct after. DoD: severity \
+                report, zero critical/high unfixed or a CODEOWNERS waiver object. Handoff to the \
+                qa-director."
+                    .into(),
+                manifest: Self::reviewer_lens(),
+                model_slot: "reviewer",
+                harness: "pi",
+                spawns: SpawnPolicy::Isolated,
+                output_schema: Self::schema_verdict(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "test-synthesizer",
+                tools: Self::coder_tools(false),
+                prompt: "You are a test synthesizer. Failing test first, minimal passing code; \
+                Given-When-Then; every requirement clause gets positive, negative, and edge cases. \
+                Demonstrate red-to-green in the log; re-run shuffled 3x where the harness supports it \
+                to catch flakes. Negative constraints: no hallucinated APIs, no unrelated deletions, no \
+                secrets, no unvetted dependencies. Handoff to the qa-director."
+                    .into(),
+                manifest: Self::coder_lens(),
+                model_slot: "coder.primary",
+                harness: "pi",
+                spawns: SpawnPolicy::Isolated,
+                output_schema: Self::schema_code(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "perf-qa-engineer",
+                tools: vec![
+                    "read".into(),
+                    "runProcess".into(),
+                    "code_search".into(),
+                    "tool_open".into(),
+                    "kv_get".into(),
+                ],
+                prompt: "You are a performance QA engineer. Benchmarks with baselines; p95 and latency \
+                SLOs stated per change; no optimization without profiling evidence. Negative \
+                constraints: no hallucinated numbers, no secrets. Declare your verification strategy \
+                before acting (baseline, workload, metric); verify-and-correct after. DoD: benchmark \
+                delta report vs baseline; regressions block with numbers. Handoff to the qa-director."
+                    .into(),
+                manifest: researcher.clone(),
+                model_slot: "reviewer",
+                harness: "pi",
+                spawns: SpawnPolicy::Isolated,
+                output_schema: Self::schema_verdict(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "accessibility-auditor",
+                tools: vec![
+                    "read".into(),
+                    "code_search".into(),
+                    "tool_open".into(),
+                    "kv_get".into(),
+                    "web_search".into(),
+                ],
+                prompt: "You are an accessibility auditor. WCAG 2.1 AA checklist: ARIA, semantics, \
+                keyboard paths, contrast; axe or pa11y findings where available. Negative constraints: \
+                no checklist theater — every rule cites its violating nodes; no secrets. Declare your \
+                verification strategy before acting (rules in scope, nodes sampled); verify-and-correct \
+                after. DoD: pass/fail per rule with violating nodes. Handoff to the qa-director."
+                    .into(),
+                manifest: researcher,
+                model_slot: "reviewer",
+                harness: "pi",
+                spawns: SpawnPolicy::Isolated,
+                output_schema: Self::schema_verdict(),
+            }),
+        ]
+    }
 }
 
 /// Raw secret patterns: never persisted in packs, locks, or emitted configs.
@@ -1245,6 +1383,31 @@ mod tests {
         for pack in &packs {
             assert_pack_coherent(pack, &cat);
             // No new catalog tools: every tool must already be registered.
+            for t in &pack.tools {
+                assert!(cat.contains(t), "{} uses unregistered tool {t}", pack.name);
+            }
+        }
+    }
+
+    #[test]
+    fn qa_batch_meets_flagship_bar() {
+        let cat = catalog();
+        let packs = RolePack::qa_batch();
+        assert_eq!(packs.len(), 5);
+        let mut names: Vec<&str> = packs.iter().map(|p| p.name.as_str()).collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                "accessibility-auditor",
+                "perf-qa-engineer",
+                "qa-director",
+                "security-auditor",
+                "test-synthesizer",
+            ]
+        );
+        for pack in &packs {
+            assert_pack_coherent(pack, &cat);
             for t in &pack.tools {
                 assert!(cat.contains(t), "{} uses unregistered tool {t}", pack.name);
             }

@@ -64,3 +64,19 @@ kv_get (Coder manifest + search/syntax OnDemand, coder_web precedent).
 Provenance: prompts authored natively from the spec role text; no new catalog
 tools (H-C gate respected); systems-architect Supervised[read, plan_open],
 all others Isolated.
+
+## #12 batch 2: QA/security remainder (spec §2)
+
+Same flagship bar via `RolePack::qa_batch()` +
+`qa_batch_meets_flagship_bar`.
+
+| Pack | Slot | Harness | Tool lens |
+|---|---|---|---|
+| qa-director | `reviewer` | omp | read, code_search, tool_open, kv_get, syntax_check, sast, sbom (reviewer lens, Supervised[read, code_search]) |
+| security-auditor | `reviewer` | pi | read, code_search, tool_open, kv_get, sast, syntax_check (reviewer lens, Isolated) |
+| test-synthesizer | `coder.primary` | pi | coder lens (Isolated) |
+| perf-qa-engineer | `reviewer` | pi | read, runProcess, code_search, tool_open, kv_get (Researcher manifest, Isolated) |
+| accessibility-auditor | `reviewer` | pi | read, code_search, tool_open, kv_get, web_search (Researcher manifest, Isolated) |
+
+Reviewer lens = Reviewer manifest + code_search OnDemand. Provenance: prompts
+authored natively from the spec role text; no new catalog tools.
