@@ -24,7 +24,8 @@ mkdir -p "$LOG"
 echo "model=$MODEL tasks=$TASKS log=$LOG" | tee "$LOG/run.log"
 
 gen() { # $1=taskfile $2=spec $3=outfile $4=extra-context
-  timeout 240 opencode run --model "$MODEL" --format json \
+  # -k: opencode spawns a server child that can ignore TERM; kill for real.
+  timeout -k 15 240 opencode run --model "$MODEL" --format json \
     "Rewrite the attached Python file so it satisfies this spec: $2. $4 Output ONLY the corrected file in a single python code fence, no prose." \
     -f "$1" > "$WORK/gen.json" 2>"$WORK/gen.err" || return 1
   python3 - "$WORK/gen.json" "$3" <<'EOF'
@@ -48,7 +49,7 @@ EOF
 }
 
 review() { # $1=candidate $2=classes -> prints APPROVE or FINDINGS
-  timeout 240 opencode run --model "$MODEL" \
+  timeout -k 15 240 opencode run --model "$MODEL" \
     "Review the attached Python file for exactly these defect classes: $2. Reply with EXACTLY the word APPROVE if none are present, else lines starting with FINDINGS: describing each." \
     -f "$1" 2>/dev/null | tail -n 20
 }
