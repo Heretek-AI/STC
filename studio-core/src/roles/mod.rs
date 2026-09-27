@@ -197,6 +197,213 @@ impl RolePack {
             })),
         }
     }
+
+    fn pi_harness() -> HarnessProfile {
+        HarnessProfile {
+            harness: "pi".into(),
+            version_req: ">=1".into(),
+        }
+    }
+
+    /// Pi profile: reviewer-security (≈ spec §2.2 security-auditor).
+    /// OWASP/STRIDE findings with file:line evidence; never prose-only verdicts.
+    /// Slot `reviewer` (auto-routing forbidden), pi harness, Isolated.
+    pub fn reviewer_security() -> Self {
+        let mut manifest = crate::mcp::default_manifest(crate::mcp::AgentRole::Reviewer);
+        // Security review needs semantic search on demand (read-only, least privilege).
+        manifest
+            .rules
+            .insert("code_search".into(), crate::mcp::Access::OnDemand);
+        Self {
+            name: "reviewer-security".into(),
+            version: "1".into(),
+            tools: vec![
+                "read".into(),
+                "code_search".into(),
+                "tool_open".into(),
+                "kv_get".into(),
+                "sast".into(),
+                "syntax_check".into(),
+            ],
+            skill_lockfile_hash: Self::lockfile_hash("reviewer-security-skills-v1"),
+            system_prompt: "You are a security-review specialist. Hold the production-ready bar: \
+                never untested, never pseudo-code, no hallucinated APIs, no unrelated deletions, \
+                no secrets in evidence, no unvetted dependencies. Declare your verification strategy \
+                before acting (sast scan scope, syntax pass, manual OWASP Top 10 + STRIDE checklist); \
+                verify-and-correct after. Report severity-rated findings with file:line:rule evidence; \
+                zero critical/high unfixed or a CODEOWNERS waiver object. Escalate blockers to the PM, \
+                breaking changes to the architect, completed reviews to QA with test commands."
+                .into(),
+            mcp_manifest: manifest,
+            model_slot: "reviewer".into(),
+            harness_profile: Self::pi_harness(),
+            spawns: SpawnPolicy::Isolated,
+            output_schema: Some(serde_json::json!({
+                "type": "object",
+                "required": ["summary", "findings", "verdict"],
+                "properties": {
+                    "summary": {"type": "string"},
+                    "findings": {"type": "array", "items": {"type": "string"}},
+                    "verdict": {"type": "string"}
+                }
+            })),
+        }
+    }
+
+    /// Pi profile: researcher-docs (≈ spec §4.5 tech-writer).
+    /// Docs accuracy + freshness + link checking; build-clean deltas.
+    /// Slot `researcher`, pi harness, Isolated.
+    pub fn researcher_docs() -> Self {
+        let mut manifest = crate::mcp::default_manifest(crate::mcp::AgentRole::Researcher);
+        // Docs authoring needs scoped writes on demand (docs dir only by convention).
+        manifest
+            .rules
+            .insert("write".into(), crate::mcp::Access::OnDemand);
+        manifest
+            .rules
+            .insert("edit".into(), crate::mcp::Access::OnDemand);
+        Self {
+            name: "researcher-docs".into(),
+            version: "1".into(),
+            tools: vec![
+                "read".into(),
+                "write".into(),
+                "edit".into(),
+                "code_search".into(),
+                "tool_open".into(),
+                "kv_get".into(),
+                "web_search".into(),
+            ],
+            skill_lockfile_hash: Self::lockfile_hash("researcher-docs-skills-v1"),
+            system_prompt: "You are a researcher and documentation specialist. Research from \
+                source of record first (code, docs, upstream); never present generated stubs as \
+                reviewed. Negative constraints: no hallucinated APIs, no unrelated deletions, no \
+                secrets, no unvetted dependencies. Declare your verification strategy before acting \
+                (sources to consult, freshness checks, link check, docs build); verify-and-correct \
+                after. Every claim carries its source; docs deltas must build clean. Escalate \
+                blocked research to the PM and completed docs to QA with build commands."
+                .into(),
+            mcp_manifest: manifest,
+            model_slot: "researcher".into(),
+            harness_profile: Self::pi_harness(),
+            spawns: SpawnPolicy::Isolated,
+            output_schema: Some(serde_json::json!({
+                "type": "object",
+                "required": ["summary", "sources", "files_changed"],
+                "properties": {
+                    "summary": {"type": "string"},
+                    "sources": {"type": "array", "items": {"type": "string"}},
+                    "files_changed": {"type": "array", "items": {"type": "string"}}
+                }
+            })),
+        }
+    }
+
+    /// Pi profile: planner-spec (≈ spec §1.1 systems-architect, proposal-only).
+    /// End-to-end specs with module boundaries and interfaces; never writes
+    /// implementation (no write/edit/patch tools at all).
+    /// Named `planner` slot (never a provider), pi harness,
+    /// Supervised with narrow inheritable scopes.
+    pub fn planner_spec() -> Self {
+        Self {
+            name: "planner-spec".into(),
+            version: "1".into(),
+            tools: vec![
+                "read".into(),
+                "code_search".into(),
+                "tool_open".into(),
+                "kv_get".into(),
+                "plan_open".into(),
+                "retrieve_docs".into(),
+            ],
+            skill_lockfile_hash: Self::lockfile_hash("planner-spec-skills-v1"),
+            system_prompt: "You are a planning specialist. Produce specs, RFCs, interface lists, \
+                and boundary maps — never implementation. Outputs are documents and decisions: every \
+                directive carries owner, acceptance criteria, and deadline-tick. Negative constraints: \
+                no hallucinated APIs, no scope improvisation (request expansion instead), no secrets. \
+                Declare your verification strategy before acting (interfaces to confirm, risks to \
+                retire); verify-and-correct after. Escalate blocked planning to the PM and completed \
+                specs to the dispatcher with acceptance criteria."
+                .into(),
+            mcp_manifest: crate::mcp::default_manifest(crate::mcp::AgentRole::Manager),
+            model_slot: "planner".into(),
+            harness_profile: Self::pi_harness(),
+            spawns: SpawnPolicy::Supervised {
+                inheritable_scopes: vec!["read".into(), "plan_open".into()],
+            },
+            output_schema: Some(serde_json::json!({
+                "type": "object",
+                "required": ["summary", "decisions", "interfaces", "risks"],
+                "properties": {
+                    "summary": {"type": "string"},
+                    "decisions": {"type": "array", "items": {"type": "string"}},
+                    "interfaces": {"type": "array", "items": {"type": "string"}},
+                    "risks": {"type": "array", "items": {"type": "string"}}
+                }
+            })),
+        }
+    }
+
+    /// Pi profile: qa-tests (≈ spec §2.3 test-synthesizer).
+    /// Failing test first, minimal passing code; red→green demonstrated.
+    /// Named `qa` slot (never a provider), pi harness, Isolated.
+    pub fn qa_tests() -> Self {
+        let mut manifest = crate::mcp::default_manifest(crate::mcp::AgentRole::Coder);
+        // QA needs search + syntax on demand (least privilege, not deny).
+        use crate::mcp::Access;
+        manifest
+            .rules
+            .insert("code_search".into(), Access::OnDemand);
+        manifest
+            .rules
+            .insert("syntax_check".into(), Access::OnDemand);
+        Self {
+            name: "qa-tests".into(),
+            version: "1".into(),
+            tools: vec![
+                "read".into(),
+                "write".into(),
+                "edit".into(),
+                "patch".into(),
+                "runProcess".into(),
+                "code_search".into(),
+                "tool_open".into(),
+                "kv_get".into(),
+            ],
+            skill_lockfile_hash: Self::lockfile_hash("qa-tests-skills-v1"),
+            system_prompt: "You are a test-synthesis specialist. Failing test first, minimal \
+                passing code; every requirement clause gets positive, negative, and edge cases in \
+                Given-When-Then form. Hold the production-ready bar: red→green demonstrated in the \
+                log, no flaky landings (re-run where the harness supports it). Negative constraints: \
+                no hallucinated APIs, no unrelated deletions, no secrets, no unvetted dependencies. \
+                Escalate blocked tests to the PM and completed suites to QA with test commands."
+                .into(),
+            mcp_manifest: manifest,
+            model_slot: "qa".into(),
+            harness_profile: Self::pi_harness(),
+            spawns: SpawnPolicy::Isolated,
+            output_schema: Some(serde_json::json!({
+                "type": "object",
+                "required": ["summary", "files_changed", "tests"],
+                "properties": {
+                    "summary": {"type": "string"},
+                    "files_changed": {"type": "array", "items": {"type": "string"}},
+                    "tests": {"type": "string"}
+                }
+            })),
+        }
+    }
+
+    /// The five Pi-profile packs (#13): coder-web flagship + four new profiles.
+    pub fn pi_library() -> Vec<Self> {
+        vec![
+            Self::coder_web(),
+            Self::reviewer_security(),
+            Self::researcher_docs(),
+            Self::planner_spec(),
+            Self::qa_tests(),
+        ]
+    }
 }
 
 /// Raw secret patterns: never persisted in packs, locks, or emitted configs.
@@ -664,6 +871,76 @@ mod tests {
         assert!(body.contains("pack: coder-web v2"));
         assert!(!body.contains("pack: coder-web\n"));
         assert_eq!(body.matches("studio:rolepack start").count(), 1);
+    }
+
+    #[test]
+    fn pi_library_packs_are_coherent() {
+        let cat = catalog();
+        let packs = RolePack::pi_library();
+        assert_eq!(packs.len(), 5);
+        let mut names: Vec<&str> = packs.iter().map(|p| p.name.as_str()).collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                "coder-web",
+                "planner-spec",
+                "qa-tests",
+                "researcher-docs",
+                "reviewer-security"
+            ]
+        );
+        for pack in &packs {
+            // Acceptance: parity + manifest + secret checks green per pack.
+            pack.check_parity(&cat).unwrap();
+            pack.check_manifest().unwrap();
+            pack.check_no_raw_secrets().unwrap();
+            // Save/load roundtrip preserves the pack.
+            let dir = tempfile::tempdir().unwrap();
+            pack.save_pack(dir.path(), &cat).unwrap();
+            let back = RolePack::load_pack(dir.path()).unwrap();
+            assert_eq!(back.name, pack.name);
+            assert_eq!(back.tools, pack.tools);
+            assert_eq!(back.model_slot, pack.model_slot);
+            // Emit + verify across all 3 targets.
+            emit_pack(dir.path(), pack).unwrap();
+            verify_emitted(dir.path(), pack, &cat).unwrap();
+            // Lock pinned + drift-detecting.
+            let mut assets: HashMap<String, HashMap<String, String>> = HashMap::new();
+            let mut contents: HashMap<String, HashMap<String, String>> = HashMap::new();
+            let mut skills = HashMap::new();
+            skills.insert(
+                "profile".to_string(),
+                hash_asset(&format!("{}-skills", pack.name)),
+            );
+            assets.insert("skills".to_string(), skills.clone());
+            let mut cskills = HashMap::new();
+            cskills.insert("profile".to_string(), format!("{}-skills", pack.name));
+            contents.insert("skills".to_string(), cskills);
+            let lock = compute_lock(pack, &assets, &contents).unwrap();
+            write_lock(dir.path(), &lock).unwrap();
+            verify_lock(dir.path(), &contents).unwrap();
+        }
+    }
+
+    #[test]
+    fn pi_library_spawns_never_escalate() {
+        for pack in RolePack::pi_library() {
+            // No pack may grant write-class scopes to children beyond Isolated,
+            // and Supervised packs inherit read-only scopes only.
+            match &pack.spawns {
+                SpawnPolicy::Isolated => {}
+                SpawnPolicy::Supervised { inheritable_scopes } => {
+                    for s in inheritable_scopes {
+                        assert!(
+                            ["read", "code_search", "plan_open"].contains(&s.as_str()),
+                            "{} inherits write-class scope {s}",
+                            pack.name
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
