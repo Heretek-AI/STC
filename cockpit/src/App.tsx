@@ -7,6 +7,7 @@ import Providers from "./pages/Providers";
 
 type Snapshot = {
   db_age_ms: number;
+  runtime_mode: string;
   fleet: { id: string; kind: string; status: string; lane: string }[];
   stream: { seq: number; kind: string; payload: string }[];
   receipts: { id: string; task_id: string; kind: string; evidence: string }[];
@@ -28,6 +29,51 @@ async function pollSnapshot(): Promise<Snapshot> {
 
 function StaleBadge({ ms }: { ms: number }) {
   return <span className="stale">source: studio.db · updated {ms}ms ago</span>;
+}
+
+function isDevMode(mode: string): boolean {
+  return mode === "privileged-dev";
+}
+
+function runtimeLabel(mode: string): string {
+  if (isDevMode(mode)) return "DEV-MODE · socket-mounted (root-equivalent)";
+  return `runtime: ${mode}`;
+}
+
+const RUNTIME_STYLES: Record<string, CSSProperties> = {
+  dev: {
+    border: "1px solid var(--diff-deleted)",
+    color: "var(--diff-deleted)",
+    borderRadius: 999,
+    padding: "1px 8px",
+    fontSize: 11,
+    marginLeft: 8,
+  },
+  rootless: {
+    border: "1px solid var(--border)",
+    color: "var(--text-dim)",
+    borderRadius: 999,
+    padding: "1px 8px",
+    fontSize: 11,
+    marginLeft: 8,
+  },
+};
+
+function runtimeStyleKey(mode: string): string {
+  return isDevMode(mode) ? "dev" : "rootless";
+}
+
+function RuntimeBadge({ mode }: { mode: string }) {
+  const key = runtimeStyleKey(mode);
+  return (
+    <span
+      className={key === "dev" ? "runtime-dev" : "runtime-rootless"}
+      title="source: studio.db snapshot.runtime_mode (STUDIO_LANE_RUNTIME)"
+      style={RUNTIME_STYLES[key]}
+    >
+      {runtimeLabel(mode)}
+    </span>
+  );
 }
 
 export default function App() {
@@ -52,6 +98,7 @@ export default function App() {
     <div>
       <header>
         <h1>STUDIO</h1> <StaleBadge ms={snap.db_age_ms} />
+        <RuntimeBadge mode={snap.runtime_mode ?? "rootless"} />
         <nav style={{ display: "flex", gap: 8, margin: "8px 0" }}>
           <button
             style={tabStyle(tab === "war-room")}

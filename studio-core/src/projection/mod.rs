@@ -55,6 +55,24 @@ pub struct Snapshot {
     pub receipts: Vec<ReceiptRow>,
     pub burn: Vec<BurnRow>,
     pub change_seq: i64,
+    /// Lane runtime mode bound to `STUDIO_LANE_RUNTIME` (`rootless` default,
+    /// `privileged-dev` only via explicit override). Cockpit renders a
+    /// persistent dev-mode badge from this; UI never owns it.
+    pub runtime_mode: String,
+}
+
+/// Resolve the lane runtime mode from the environment (fail closed to
+/// `rootless` on unknown values; never panics on missing env).
+pub fn runtime_mode_from_env() -> String {
+    match std::env::var("STUDIO_LANE_RUNTIME")
+        .unwrap_or_else(|_| "rootless".into())
+        .trim()
+        .to_lowercase()
+        .as_str()
+    {
+        "privileged-dev" | "privileged" | "dev" => "privileged-dev".into(),
+        _ => "rootless".into(),
+    }
 }
 
 impl Snapshot {
@@ -86,8 +104,29 @@ mod tests {
             receipts: vec![],
             burn: vec![],
             change_seq: 0,
+            runtime_mode: "rootless".into(),
         };
         assert!(s.stale_badge().contains("studio.db"));
+    }
+
+    #[test]
+    fn runtime_mode_resolves_fail_closed() {
+        let prev = std::env::var("STUDIO_LANE_RUNTIME").ok();
+        unsafe {
+            std::env::set_var("STUDIO_LANE_RUNTIME", "bogus-mode");
+        }
+        assert_eq!(super::runtime_mode_from_env(), "rootless");
+        unsafe {
+            std::env::set_var("STUDIO_LANE_RUNTIME", "privileged-dev");
+        }
+        assert_eq!(super::runtime_mode_from_env(), "privileged-dev");
+        unsafe {
+            if let Some(v) = prev {
+                std::env::set_var("STUDIO_LANE_RUNTIME", v);
+            } else {
+                std::env::remove_var("STUDIO_LANE_RUNTIME");
+            }
+        }
     }
 
     #[test]

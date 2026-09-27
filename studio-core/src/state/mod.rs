@@ -248,6 +248,7 @@ impl StateStore {
             receipts,
             burn,
             change_seq: change_seq.unwrap_or(0),
+            runtime_mode: crate::projection::runtime_mode_from_env(),
         })
     }
 

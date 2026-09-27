@@ -15,6 +15,9 @@ studio logs --follow        # watch the agency work
 
 Open the cockpit (WebUI beta) at the printed address, or run `studio-tui` for the terminal.
 
+Homelab hardening + 24/7 ops: see `docs/homelab-quickstart.md` (lane image
+build, UID/GID smoke test, volume drill, dev-mode guardrails).
+
 ## The autonomy dial
 
 New projects start at **full authority**: the LLM manager negotiates scope with you, dispatches into the DAG, and lands through the gates. Nothing needs a tap — the audit log is the safety net.

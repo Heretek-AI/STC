@@ -62,6 +62,16 @@ fn render(f: &mut Frame, view: View, snap: &studio_core::projection::Snapshot) {
         ])
         .split(f.area());
     // header: all four views + staleness badge (GUI wrong if it disagrees with db)
+    let runtime_label = if snap.runtime_mode == "privileged-dev" {
+        " · DEV-MODE (root-equiv)".to_string()
+    } else {
+        format!(" · {}", snap.runtime_mode)
+    };
+    let runtime_color = if snap.runtime_mode == "privileged-dev" {
+        Color::Red
+    } else {
+        Color::DarkGray
+    };
     let header = Paragraph::new(Line::from(vec![
         Span::styled(
             "STUDIO ",
@@ -82,6 +92,7 @@ fn render(f: &mut Frame, view: View, snap: &studio_core::projection::Snapshot) {
                 .collect::<String>(),
         ),
         Span::styled(snap.stale_badge(), Style::default().fg(Color::DarkGray)),
+        Span::styled(runtime_label, Style::default().fg(runtime_color)),
     ]))
     .block(Block::default().borders(Borders::ALL));
     f.render_widget(header, chunks[0]);
@@ -192,6 +203,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipts: vec![],
                 burn: vec![],
                 change_seq: 0,
+                runtime_mode: studio_core::projection::runtime_mode_from_env(),
             });
         terminal.draw(|f| render(f, view, &snap))?;
         if event::poll(std::time::Duration::from_millis(POLL_MS))? {

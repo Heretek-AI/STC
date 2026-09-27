@@ -18,6 +18,10 @@ services:
     image: studio-lane:latest
     # Rootless-friendly: run as invoking user so worktree files match host.
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    # Hardening: drop all caps, block privilege escalation. Never add
+    # docker.sock, privileged:true, or host network here — dev override only.
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
     working_dir: /workspace
     volumes:
       - ${STUDIO_REPO:-.}:/workspace:rw
