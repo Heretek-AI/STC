@@ -100,6 +100,30 @@ enum Cmd {
         #[arg(long)]
         dir: String,
     },
+    /// Request an Ask-policy approval (prints the approval id; the push leg
+    /// travels over the approval-relay transport, decision via ApprovalDecide).
+    Approval {
+        #[arg(long)]
+        db: String,
+        #[arg(long)]
+        task: String,
+        #[arg(long)]
+        action: String,
+        #[arg(long, default_value = "")]
+        detail: String,
+    },
+    /// Record a one-tap approval decision (the phone-tap surface until the
+    /// mobile client lands). Double decisions fail closed.
+    ApprovalDecide {
+        #[arg(long)]
+        db: String,
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        decision: String,
+        #[arg(long, default_value = "")]
+        comment: String,
+    },
 }
 
 #[tokio::main]
@@ -240,6 +264,62 @@ async fn main() {
                 Ok(files) => println!("mirrored {} files under {dir}/roles", files.len()),
                 Err(e) => {
                     eprintln!("export packs failed: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Cmd::Approval {
+            db,
+            task,
+            action,
+            detail,
+        } => match studio_core::state::StateStore::open(&db) {
+            Ok(s) => {
+                match studio_core::scheduler::autonomy::request_approval(
+                    &s, &task, &action, &detail,
+                ) {
+                    Ok(id) => println!("{id}"),
+                    Err(e) => {
+                        eprintln!("approval request failed: {e}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("open db failed: {e}");
+                std::process::exit(1);
+            }
+        },
+        Cmd::ApprovalDecide {
+            db,
+            id,
+            decision,
+            comment,
+        } => {
+            let approved = match decision.trim().to_lowercase().as_str() {
+                "approve" | "approved" | "yes" => true,
+                "deny" | "denied" | "no" => false,
+                other => {
+                    eprintln!(
+                        "invalid decision '{other}': expected approve|deny (refusing to guess)"
+                    );
+                    std::process::exit(1);
+                }
+            };
+            match studio_core::state::StateStore::open(&db) {
+                Ok(s) => {
+                    match studio_core::scheduler::autonomy::decide_approval(
+                        &s, &id, approved, &comment,
+                    ) {
+                        Ok(()) => println!("decided {id} approved={approved}"),
+                        Err(e) => {
+                            eprintln!("approval decide failed: {e}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("open db failed: {e}");
                     std::process::exit(1);
                 }
             }

@@ -108,6 +108,83 @@ pub fn gate_evidence(autonomy: Autonomy, action_id: &str, surface: Surface) -> S
     .to_string()
 }
 
+/// Approval lifecycle for Ask-policy roundtrips (issue #5): request, then push
+/// over the relay transport (outside this crate), then decide into ledger
+/// receipts. Anchors: humanlayer `store.go` (Approval pending|approved|denied
+/// plus manager lifecycle) and codeagent awaiting-answer flows (question with
+/// expiry surfaced as an event, never silent). No schema change: approvals
+/// live in `receipts` (approval.pending/granted/denied) plus `events`.
+pub fn request_approval(
+    store: &crate::state::StateStore,
+    task_id: &str,
+    action_id: &str,
+    detail: &str,
+) -> Result<String, crate::state::StateError> {
+    let digest = crate::roles::RolePack::lockfile_hash(&format!("{task_id}:{action_id}:{detail}"));
+    let id = format!(
+        "appr-{}-{}",
+        action_id.replace(['/', '.', ' '], "-"),
+        &digest[..12]
+    );
+    let evidence = serde_json::json!({
+        "task_id": task_id,
+        "action": action_id,
+        "detail": detail,
+        "status": "pending",
+    })
+    .to_string();
+    store.append_receipt(&id, task_id, "approval.pending", &evidence)?;
+    store.append_event("approval.requested", &id)?;
+    Ok(id)
+}
+
+/// Record a one-tap decision. A second decision on the same approval fails
+/// closed (double-tap safety); unknown ids fail closed.
+pub fn decide_approval(
+    store: &crate::state::StateStore,
+    approval_id: &str,
+    approved: bool,
+    comment: &str,
+) -> Result<(), String> {
+    let snap = store.snapshot().map_err(|e| e.to_string())?;
+    let pending_task = snap
+        .receipts
+        .iter()
+        .find(|r| r.id == approval_id && r.kind == "approval.pending")
+        .map(|r| r.task_id.clone())
+        .ok_or_else(|| format!("unknown or non-pending approval {approval_id}"))?;
+    if snap
+        .receipts
+        .iter()
+        .any(|r| r.id == format!("{approval_id}/decision"))
+    {
+        return Err(format!("approval {approval_id} already decided"));
+    }
+    let kind = if approved {
+        "approval.granted"
+    } else {
+        "approval.denied"
+    };
+    let evidence = serde_json::json!({
+        "approval_id": approval_id,
+        "approved": approved,
+        "comment": comment,
+    })
+    .to_string();
+    store
+        .append_receipt(
+            &format!("{approval_id}/decision"),
+            &pending_task,
+            kind,
+            &evidence,
+        )
+        .map_err(|e| e.to_string())?;
+    store
+        .append_event("approval.resolved", approval_id)
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,5 +274,26 @@ mod tests {
         assert_eq!(Autonomy::parse("bogus"), Autonomy::Advisory);
         assert_eq!(Autonomy::parse("full"), Autonomy::Full);
         assert_eq!(Autonomy::default_for_new_project(), Autonomy::Full);
+    }
+
+    #[test]
+    fn approval_roundtrip_request_decide_receipts() {
+        let s = crate::state::StateStore::open_in_memory().unwrap();
+        let id = request_approval(&s, "t1", "merge.land", "2 files").unwrap();
+        let snap = s.snapshot().unwrap();
+        assert!(snap
+            .receipts
+            .iter()
+            .any(|r| r.id == id && r.kind == "approval.pending"));
+        decide_approval(&s, &id, true, "tap approve").unwrap();
+        let snap2 = s.snapshot().unwrap();
+        assert!(snap2
+            .receipts
+            .iter()
+            .any(|r| { r.id == format!("{id}/decision") && r.kind == "approval.granted" }));
+        assert!(snap2.stream.iter().any(|e| e.kind == "approval.resolved"));
+        // Double-tap fails closed; unknown id fails closed.
+        assert!(decide_approval(&s, &id, false, "second tap").is_err());
+        assert!(decide_approval(&s, "appr-nope", true, "").is_err());
     }
 }
