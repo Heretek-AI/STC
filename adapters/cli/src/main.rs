@@ -124,6 +124,28 @@ enum Cmd {
         #[arg(long, default_value = "")]
         comment: String,
     },
+    /// Store one memory doc through the real write path (deny-list + budgets
+    /// enforced). Body should be an anchored summary for L1.
+    MemoryPut {
+        #[arg(long)]
+        db: String,
+        #[arg(long)]
+        doc_id: String,
+        #[arg(long, default_value = "L1")]
+        level: String,
+        #[arg(long)]
+        body: String,
+    },
+    /// FTS retrieval over the memory store (rung-2 read path). Prints
+    /// `doc_id<TAB>body` per hit, best first.
+    MemorySearch {
+        #[arg(long)]
+        db: String,
+        #[arg(long)]
+        query: String,
+        #[arg(long, default_value_t = 3)]
+        limit: usize,
+    },
 }
 
 #[tokio::main]
@@ -318,6 +340,49 @@ async fn main() {
                         }
                     }
                 }
+                Err(e) => {
+                    eprintln!("open db failed: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Cmd::MemoryPut {
+            db,
+            doc_id,
+            level,
+            body,
+        } => match studio_core::memory::MemoryStore::open(&db) {
+            Ok(s) => {
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0);
+                match s.put(&doc_id, &level, &body, now_ms) {
+                    Ok(()) => println!("stored {doc_id}"),
+                    Err(e) => {
+                        eprintln!("memory put failed: {e}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("open db failed: {e}");
+                std::process::exit(1);
+            }
+        },
+        Cmd::MemorySearch { db, query, limit } => {
+            match studio_core::memory::MemoryStore::open(&db) {
+                Ok(s) => match s.search_fts(&query, limit) {
+                    Ok(hits) => {
+                        for (id, body) in hits {
+                            println!("{id}\t{body}");
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("memory search failed: {e}");
+                        std::process::exit(1);
+                    }
+                },
                 Err(e) => {
                     eprintln!("open db failed: {e}");
                     std::process::exit(1);
