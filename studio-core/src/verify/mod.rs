@@ -10,8 +10,10 @@ pub mod anti_stall;
 pub mod dod;
 pub mod fallow;
 pub mod freeze;
+pub mod semgrep;
 
 pub use anti_stall::{DoomLoopDetector, StallSupervisor};
 pub use dod::{evaluate_done, DodCheck, DodReceipt, TapOut};
 pub use fallow::{fallow_audit, fallow_audit_with, FallowEvidence};
 pub use freeze::{freeze_candidate, AckLedger, CorrectionBudget, FrozenCandidate, RiskTier};
+pub use semgrep::{semgrep_scan, semgrep_scan_with, SemgrepEvidence};

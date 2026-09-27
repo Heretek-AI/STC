@@ -1,0 +1,41 @@
+# STC Guardian trial rules (issue #15). Minimal, lane-local, no registry fetch.
+# Covers the three trial seeds: hardcoded secret, dangerous sink, hallucinated dep.
+rules:
+  - id: stc-hardcoded-secret
+    languages: [python, javascript, typescript]
+    severity: ERROR
+    message: "STC Guardian: hardcoded secret material (use {{STUDIO_SECRET:label}} placeholders)"
+    patterns:
+      - pattern-either:
+          - pattern: $KEY = "..."
+          - pattern: $KEY = '...'
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: (?i).*(api_key|apikey|secret|password|passwd|token).*
+  - id: stc-dangerous-sink
+    languages: [python]
+    severity: ERROR
+    message: "STC Guardian: dangerous sink with untrusted input (eval/exec/shell=True)"
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: exec(...)
+      - pattern: subprocess.$CALL(..., shell=True, ...)
+  - id: stc-hallucinated-dep
+    languages: [python]
+    severity: ERROR
+    message: "STC Guardian: dependency not on the lane allowlist (possible hallucinated dep)"
+    # Two branches: plain imports and from-imports bind different
+    # metavariables, and `import $PKG` also matches from-import lines, so the
+    # plain branch explicitly excludes `from ...` lines.
+    pattern-either:
+      - patterns:
+          - pattern: import $PKG
+          - pattern-not-regex: (?m)^from\s
+          - metavariable-regex:
+              metavariable: $PKG
+              regex: (?i)^(?!os(\.|$)|sys(\.|$)|json(\.|$)|re(\.|$)|pathlib(\.|$)|subprocess(\.|$)|typing(\.|$)|dataclasses(\.|$)|requests(\.|$)|pytest(\.|$)).*
+      - patterns:
+          - pattern: from $MOD import $NAME
+          - metavariable-regex:
+              metavariable: $MOD
+              regex: (?i)^(?!os(\.|$)|sys(\.|$)|json(\.|$)|re(\.|$)|pathlib(\.|$)|subprocess(\.|$)|typing(\.|$)|dataclasses(\.|$)|requests(\.|$)|pytest(\.|$)).*
