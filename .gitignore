@@ -27,3 +27,6 @@ review/
 .DS_Store
 # Tauri generated
 cockpit/src-tauri/gen/
+.env
+.research
+.research/
