@@ -40,3 +40,27 @@ cargo test -p studio-core roles   # parity + manifest + secrets + roundtrip + em
 `check_parity + check_manifest + check_no_raw_secrets`, survive save/load
 roundtrip, emit + verify across all 3 targets, and verify `--locked`.
 `pi_library_spawns_never_escalate` asserts no write-class inherited scopes.
+
+## #12 batch 1: engineering remainder (spec §1)
+
+Same flagship bar via `RolePack::engineering_batch()` +
+`engineering_batch_meets_flagship_bar` (coherence + no unregistered tools).
+
+| Pack | Slot | Harness | Tool lens |
+|---|---|---|---|
+| systems-architect | `architect` | omp | read, code_search, tool_open, kv_get, plan_open, dag_commit, retrieve_docs |
+| rust-systems-engineer | `coder.primary` | opencode | coder lens + syntax_check |
+| fullstack-ts-engineer | `coder.primary` | opencode | coder lens + syntax_check |
+| python-backend-engineer | `coder.primary` | pi | coder lens |
+| go-services-engineer | `coder.primary` | pi | coder lens |
+| firmware-embedded-engineer | `coder.primary` | pi | coder lens |
+| mobile-engineer | `coder.primary` | pi | coder lens |
+| compiler-tooling-engineer | `coder.primary` | pi | coder lens |
+| dba-data-engineer | `coder.primary` | pi | coder lens |
+| cloud-k8s-architect | `architect` | omp | coder lens + retrieve_docs |
+
+Coder lens = read, write, edit, patch, runProcess, code_search, tool_open,
+kv_get (Coder manifest + search/syntax OnDemand, coder_web precedent).
+Provenance: prompts authored natively from the spec role text; no new catalog
+tools (H-C gate respected); systems-architect Supervised[read, plan_open],
+all others Isolated.

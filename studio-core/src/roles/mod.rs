@@ -95,6 +95,18 @@ impl SpawnPolicy {
     }
 }
 
+/// Parts for one engineering-batch pack (spec §1, #12 batch 1).
+struct BatchParts {
+    name: &'static str,
+    tools: Vec<String>,
+    prompt: String,
+    manifest: crate::mcp::RoleManifest,
+    model_slot: &'static str,
+    harness: &'static str,
+    spawns: SpawnPolicy,
+    output_schema: Option<serde_json::Value>,
+}
+
 impl RolePack {
     pub fn lockfile_hash(content: &str) -> String {
         let mut h = Sha256::new();
@@ -402,6 +414,267 @@ impl RolePack {
             Self::researcher_docs(),
             Self::planner_spec(),
             Self::qa_tests(),
+        ]
+    }
+
+    fn schema_code() -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "required": ["summary", "files_changed", "tests"],
+            "properties": {
+                "summary": {"type": "string"},
+                "files_changed": {"type": "array", "items": {"type": "string"}},
+                "tests": {"type": "string"}
+            }
+        }))
+    }
+
+    fn schema_spec() -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "required": ["summary", "decisions", "interfaces", "risks"],
+            "properties": {
+                "summary": {"type": "string"},
+                "decisions": {"type": "array", "items": {"type": "string"}},
+                "interfaces": {"type": "array", "items": {"type": "string"}},
+                "risks": {"type": "array", "items": {"type": "string"}}
+            }
+        }))
+    }
+
+    /// Coder-lens manifest shared by implementation roles (coder_web precedent:
+    /// Coder base plus search + syntax on demand, least privilege not deny).
+    fn coder_lens() -> crate::mcp::RoleManifest {
+        let mut manifest = crate::mcp::default_manifest(crate::mcp::AgentRole::Coder);
+        manifest
+            .rules
+            .insert("code_search".into(), crate::mcp::Access::OnDemand);
+        manifest
+            .rules
+            .insert("syntax_check".into(), crate::mcp::Access::OnDemand);
+        manifest
+    }
+
+    fn harness_named(harness: &str) -> HarnessProfile {
+        HarnessProfile {
+            harness: harness.into(),
+            version_req: ">=1".into(),
+        }
+    }
+
+    /// One engineering-batch pack from spec §1 (#12 batch 1). Tools are always
+    /// a subset of `tools` passing `manifest`; prompts carry identity,
+    /// constraints, DoD, and handoff per the spec role text.
+    fn batch_pack(parts: BatchParts) -> Self {
+        Self {
+            name: parts.name.into(),
+            version: "1".into(),
+            tools: parts.tools,
+            skill_lockfile_hash: Self::lockfile_hash(&format!("{}-skills-v1", parts.name)),
+            system_prompt: parts.prompt,
+            mcp_manifest: parts.manifest,
+            model_slot: parts.model_slot.into(),
+            harness_profile: Self::harness_named(parts.harness),
+            spawns: parts.spawns,
+            output_schema: parts.output_schema,
+        }
+    }
+
+    fn coder_tools(with_syntax: bool) -> Vec<String> {
+        let mut t = vec![
+            "read".into(),
+            "write".into(),
+            "edit".into(),
+            "patch".into(),
+            "runProcess".into(),
+            "code_search".into(),
+            "tool_open".into(),
+            "kv_get".into(),
+        ];
+        if with_syntax {
+            t.push("syntax_check".into());
+        }
+        t
+    }
+
+    /// #12 batch 1: engineering remainder, spec §1.1–§1.10 (systems-architect,
+    /// rust/fullstack-ts/python/go/firmware/mobile/compiler/dba/cloud-k8s).
+    /// Harness + slot + DoD follow the spec role text; no catalog additions.
+    pub fn engineering_batch() -> Vec<Self> {
+        let iso = SpawnPolicy::Isolated;
+        vec![
+            Self::batch_pack(BatchParts {
+                name: "systems-architect",
+                tools: vec![
+                    "read".into(),
+                    "code_search".into(),
+                    "tool_open".into(),
+                    "kv_get".into(),
+                    "plan_open".into(),
+                    "dag_commit".into(),
+                    "retrieve_docs".into(),
+                ],
+                prompt: "You are a systems architect. Own end-to-end architecture: module boundaries, \
+                protocols, RFCs with interface lists and boundary maps — never implementation. \
+                Negative constraints: no hallucinated APIs, no scope improvisation, no secrets. \
+                Declare your verification strategy before acting (boundaries to confirm, risks to \
+                retire); verify-and-correct after. DoD: RFC artifact + interface list + boundary map, \
+                validated via dag_commit. Handoff to the scrum-dispatcher {rfc, interfaces}, and to QA \
+                on breaking changes."
+                    .into(),
+                manifest: crate::mcp::default_manifest(crate::mcp::AgentRole::Manager),
+                model_slot: "architect",
+                harness: "omp",
+                spawns: SpawnPolicy::Supervised {
+                    inheritable_scopes: vec!["read".into(), "plan_open".into()],
+                },
+                output_schema: Self::schema_spec(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "rust-systems-engineer",
+                tools: Self::coder_tools(true),
+                prompt: "You are a Rust systems engineer. Memory-safe zero-cost Rust: borrow-check-clean \
+                or it does not land; no unwrap on new paths without a justification object. \
+                Negative constraints: no hallucinated APIs, no unrelated deletions, no secrets, no \
+                unvetted dependencies. Declare your verification strategy before acting (clippy, tests, \
+                tree-sitter parse); verify-and-correct after. DoD: cargo clippy -D warnings + cargo test \
+                green + tree-sitter parse. Handoff to the test-synthesizer {files, test-cmd}, then QA."
+                    .into(),
+                manifest: Self::coder_lens(),
+                model_slot: "coder.primary",
+                harness: "opencode",
+                spawns: iso.clone(),
+                output_schema: Self::schema_code(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "fullstack-ts-engineer",
+                tools: Self::coder_tools(true),
+                prompt: "You are a fullstack TypeScript engineer. Type-safe TS/React/Node with non-any \
+                annotations; fallow-clean deltas. Negative constraints: no hallucinated APIs, no \
+                unrelated deletions, no secrets, no unvetted dependencies. Declare your verification \
+                strategy before acting (tsc, tests, fallow audit); verify-and-correct after. DoD: tsc + \
+                fallow audit new-findings-zero + tests green. Handoff to the test-synthesizer, then QA."
+                    .into(),
+                manifest: Self::coder_lens(),
+                model_slot: "coder.primary",
+                harness: "opencode",
+                spawns: iso.clone(),
+                output_schema: Self::schema_code(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "python-backend-engineer",
+                tools: Self::coder_tools(false),
+                prompt: "You are a Python backend engineer. Strict-mypy Python with Pydantic runtime \
+                validation at API boundaries. Negative constraints: no hallucinated APIs, no unrelated \
+                deletions, no secrets, no unvetted dependencies. Declare your verification strategy \
+                before acting (mypy strict, ruff, pytest); verify-and-correct after. DoD: mypy strict + \
+                ruff + pytest green. Handoff to the test-synthesizer, then QA."
+                    .into(),
+                manifest: Self::coder_lens(),
+                model_slot: "coder.primary",
+                harness: "pi",
+                spawns: iso.clone(),
+                output_schema: Self::schema_code(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "go-services-engineer",
+                tools: Self::coder_tools(false),
+                prompt: "You are a Go services engineer. Idiomatic Go services; go vet clean, race detector \
+                on concurrency work. Negative constraints: no hallucinated APIs, no unrelated deletions, \
+                no secrets, no unvetted dependencies. Declare your verification strategy before acting \
+                (vet, race-enabled tests); verify-and-correct after. DoD: go vet + go test -race green. \
+                Handoff to the test-synthesizer, then QA."
+                    .into(),
+                manifest: Self::coder_lens(),
+                model_slot: "coder.primary",
+                harness: "pi",
+                spawns: iso.clone(),
+                output_schema: Self::schema_code(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "firmware-embedded-engineer",
+                tools: Self::coder_tools(false),
+                prompt: "You are a firmware and embedded engineer (ARM Cortex, RISC-V, bare metal). No heap \
+                without justification; hardware-in-loop notes where applicable. Negative constraints: no \
+                hallucinated APIs, no unrelated deletions, no secrets, no unvetted dependencies. Declare \
+                your verification strategy before acting (cross-compile, size report, target test or HIL \
+                note); verify-and-correct after. DoD: cross-compile clean + size report + target test or \
+                HIL note. Handoff to the test-synthesizer, then QA."
+                    .into(),
+                manifest: Self::coder_lens(),
+                model_slot: "coder.primary",
+                harness: "pi",
+                spawns: iso.clone(),
+                output_schema: Self::schema_code(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "mobile-engineer",
+                tools: Self::coder_tools(false),
+                prompt: "You are a cross-platform mobile engineer (React Native, Flutter, Kotlin, Swift). \
+                Offline-sync paths tested; no main-thread I/O. Negative constraints: no hallucinated \
+                APIs, no unrelated deletions, no secrets, no unvetted dependencies. Declare your \
+                verification strategy before acting (typecheck, unit tests, offline-path test or waiver); \
+                verify-and-correct after. DoD: typecheck + unit tests + offline-path test or explicit \
+                waiver. Handoff to the test-synthesizer, then QA."
+                    .into(),
+                manifest: Self::coder_lens(),
+                model_slot: "coder.primary",
+                harness: "pi",
+                spawns: iso.clone(),
+                output_schema: Self::schema_code(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "compiler-tooling-engineer",
+                tools: Self::coder_tools(true),
+                prompt: "You are a compiler and tooling engineer (AST parsers, linters, codegen). Snapshot \
+                and golden tests mandatory for every transform; fuzz-corpus entry for new parser rules. \
+                Negative constraints: no hallucinated APIs, no unrelated deletions, no secrets, no \
+                unhandled-grammar panics. Declare your verification strategy before acting (golden tests, \
+                rule docs); verify-and-correct after. DoD: golden tests green + new-rule docs. Handoff to \
+                the test-synthesizer, then QA."
+                    .into(),
+                manifest: Self::coder_lens(),
+                model_slot: "coder.primary",
+                harness: "pi",
+                spawns: iso.clone(),
+                output_schema: Self::schema_code(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "dba-data-engineer",
+                tools: Self::coder_tools(false),
+                prompt: "You are a DBA and data engineer. Migrations are expand-migrate-contract: \
+                backward-compatible, zero-downtime, with rollback scripts; N+1 joins over selects; \
+                read-only production access (plan only, never apply). Negative constraints: no \
+                hallucinated APIs, no secrets. Declare your verification strategy before acting \
+                (migration + rollback + EXPLAIN note on new indexes); verify-and-correct after. DoD: \
+                migration + rollback script + EXPLAIN note. Handoff to the test-synthesizer, then QA \
+                and the release-engineer."
+                    .into(),
+                manifest: Self::coder_lens(),
+                model_slot: "coder.primary",
+                harness: "pi",
+                spawns: iso.clone(),
+                output_schema: Self::schema_code(),
+            }),
+            Self::batch_pack(BatchParts {
+                name: "cloud-k8s-architect",
+                tools: {
+                    let mut t = Self::coder_tools(false);
+                    t.push("retrieve_docs".into());
+                    t
+                },
+                prompt: "You are a cloud and Kubernetes architect (Terraform, K8s, mesh). Attach terraform plan \
+                output; apply is never executed (a human runs apply). Manifests follow a CIS checklist \
+                (no root, no privileged). Negative constraints: no hallucinated APIs, no secrets. Declare \
+                your verification strategy before acting (plan artifact, CIS checklist); verify-and-correct \
+                after. DoD: plan artifact + CIS checklist. Handoff to devops-sre, then the release-engineer."
+                    .into(),
+                manifest: Self::coder_lens(),
+                model_slot: "architect",
+                harness: "omp",
+                spawns: iso,
+                output_schema: Self::schema_spec(),
+            }),
         ]
     }
 }
@@ -873,6 +1146,38 @@ mod tests {
         assert_eq!(body.matches("studio:rolepack start").count(), 1);
     }
 
+    fn assert_pack_coherent(pack: &RolePack, cat: &[String]) {
+        // Acceptance: parity + manifest + secret checks green per pack.
+        pack.check_parity(cat).unwrap();
+        pack.check_manifest().unwrap();
+        pack.check_no_raw_secrets().unwrap();
+        // Save/load roundtrip preserves the pack.
+        let dir = tempfile::tempdir().unwrap();
+        pack.save_pack(dir.path(), cat).unwrap();
+        let back = RolePack::load_pack(dir.path()).unwrap();
+        assert_eq!(back.name, pack.name);
+        assert_eq!(back.tools, pack.tools);
+        assert_eq!(back.model_slot, pack.model_slot);
+        // Emit + verify across all 3 targets.
+        emit_pack(dir.path(), pack).unwrap();
+        verify_emitted(dir.path(), pack, cat).unwrap();
+        // Lock pinned + drift-detecting.
+        let mut assets: HashMap<String, HashMap<String, String>> = HashMap::new();
+        let mut contents: HashMap<String, HashMap<String, String>> = HashMap::new();
+        let mut skills = HashMap::new();
+        skills.insert(
+            "profile".to_string(),
+            hash_asset(&format!("{}-skills", pack.name)),
+        );
+        assets.insert("skills".to_string(), skills.clone());
+        let mut cskills = HashMap::new();
+        cskills.insert("profile".to_string(), format!("{}-skills", pack.name));
+        contents.insert("skills".to_string(), cskills);
+        let lock = compute_lock(pack, &assets, &contents).unwrap();
+        write_lock(dir.path(), &lock).unwrap();
+        verify_lock(dir.path(), &contents).unwrap();
+    }
+
     #[test]
     fn pi_library_packs_are_coherent() {
         let cat = catalog();
@@ -891,35 +1196,7 @@ mod tests {
             ]
         );
         for pack in &packs {
-            // Acceptance: parity + manifest + secret checks green per pack.
-            pack.check_parity(&cat).unwrap();
-            pack.check_manifest().unwrap();
-            pack.check_no_raw_secrets().unwrap();
-            // Save/load roundtrip preserves the pack.
-            let dir = tempfile::tempdir().unwrap();
-            pack.save_pack(dir.path(), &cat).unwrap();
-            let back = RolePack::load_pack(dir.path()).unwrap();
-            assert_eq!(back.name, pack.name);
-            assert_eq!(back.tools, pack.tools);
-            assert_eq!(back.model_slot, pack.model_slot);
-            // Emit + verify across all 3 targets.
-            emit_pack(dir.path(), pack).unwrap();
-            verify_emitted(dir.path(), pack, &cat).unwrap();
-            // Lock pinned + drift-detecting.
-            let mut assets: HashMap<String, HashMap<String, String>> = HashMap::new();
-            let mut contents: HashMap<String, HashMap<String, String>> = HashMap::new();
-            let mut skills = HashMap::new();
-            skills.insert(
-                "profile".to_string(),
-                hash_asset(&format!("{}-skills", pack.name)),
-            );
-            assets.insert("skills".to_string(), skills.clone());
-            let mut cskills = HashMap::new();
-            cskills.insert("profile".to_string(), format!("{}-skills", pack.name));
-            contents.insert("skills".to_string(), cskills);
-            let lock = compute_lock(pack, &assets, &contents).unwrap();
-            write_lock(dir.path(), &lock).unwrap();
-            verify_lock(dir.path(), &contents).unwrap();
+            assert_pack_coherent(pack, &cat);
         }
     }
 
@@ -939,6 +1216,37 @@ mod tests {
                         );
                     }
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn engineering_batch_meets_flagship_bar() {
+        let cat = catalog();
+        let packs = RolePack::engineering_batch();
+        assert_eq!(packs.len(), 10);
+        let mut names: Vec<&str> = packs.iter().map(|p| p.name.as_str()).collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                "cloud-k8s-architect",
+                "compiler-tooling-engineer",
+                "dba-data-engineer",
+                "firmware-embedded-engineer",
+                "fullstack-ts-engineer",
+                "go-services-engineer",
+                "mobile-engineer",
+                "python-backend-engineer",
+                "rust-systems-engineer",
+                "systems-architect",
+            ]
+        );
+        for pack in &packs {
+            assert_pack_coherent(pack, &cat);
+            // No new catalog tools: every tool must already be registered.
+            for t in &pack.tools {
+                assert!(cat.contains(t), "{} uses unregistered tool {t}", pack.name);
             }
         }
     }
