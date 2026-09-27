@@ -55,24 +55,32 @@ fn lane_color(lane: &str) -> Color {
 fn render(f: &mut Frame, view: View, snap: &studio_core::projection::Snapshot) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ])
         .split(f.area());
     // header: all four views + staleness badge (GUI wrong if it disagrees with db)
     let header = Paragraph::new(Line::from(vec![
         Span::styled(
             "STUDIO ",
-            Style::default().add_modifier(Modifier::BOLD).fg(Color::White),
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .fg(Color::White),
         ),
-        Span::raw([View::WarRoom, View::Stream, View::Audit, View::Registry]
-            .iter()
-            .map(|v| {
-                if *v == view {
-                    format!("[{}] ", v.title())
-                } else {
-                    format!("{} ", v.title())
-                }
-            })
-            .collect::<String>()),
+        Span::raw(
+            [View::WarRoom, View::Stream, View::Audit, View::Registry]
+                .iter()
+                .map(|v| {
+                    if *v == view {
+                        format!("[{}] ", v.title())
+                    } else {
+                        format!("{} ", v.title())
+                    }
+                })
+                .collect::<String>(),
+        ),
         Span::styled(snap.stale_badge(), Style::default().fg(Color::DarkGray)),
     ]))
     .block(Block::default().borders(Borders::ALL));
@@ -85,13 +93,20 @@ fn render(f: &mut Frame, view: View, snap: &studio_core::projection::Snapshot) {
                 .iter()
                 .map(|t| {
                     ListItem::new(Line::from(vec![
-                        Span::styled(format!("{} ", t.lane), Style::default().fg(lane_color(&t.lane))),
+                        Span::styled(
+                            format!("{} ", t.lane),
+                            Style::default().fg(lane_color(&t.lane)),
+                        ),
                         Span::raw(format!("{} {} {}", t.id, t.kind, t.status)),
                     ]))
                 })
                 .collect();
             f.render_widget(
-                List::new(items).block(Block::default().title("Fleet board: building→validating→in-review→ready").borders(Borders::ALL)),
+                List::new(items).block(
+                    Block::default()
+                        .title("Fleet board: building→validating→in-review→ready")
+                        .borders(Borders::ALL),
+                ),
                 chunks[1],
             );
         }
@@ -103,7 +118,11 @@ fn render(f: &mut Frame, view: View, snap: &studio_core::projection::Snapshot) {
                 .map(|e| ListItem::new(format!("#{} {} {}", e.seq, e.kind, e.payload)))
                 .collect();
             f.render_widget(
-                List::new(items).block(Block::default().title("Agent Stream (terminal spine)").borders(Borders::ALL)),
+                List::new(items).block(
+                    Block::default()
+                        .title("Agent Stream (terminal spine)")
+                        .borders(Borders::ALL),
+                ),
                 chunks[1],
             );
         }
@@ -111,10 +130,19 @@ fn render(f: &mut Frame, view: View, snap: &studio_core::projection::Snapshot) {
             let items: Vec<ListItem> = snap
                 .receipts
                 .iter()
-                .map(|r| ListItem::new(format!("{} task={} kind={} evidence={}", r.id, r.task_id, r.kind, r.evidence)))
+                .map(|r| {
+                    ListItem::new(format!(
+                        "{} task={} kind={} evidence={}",
+                        r.id, r.task_id, r.kind, r.evidence
+                    ))
+                })
                 .collect();
             f.render_widget(
-                List::new(items).block(Block::default().title("Audit & Gatekeeper (evidence receipt first)").borders(Borders::ALL)),
+                List::new(items).block(
+                    Block::default()
+                        .title("Audit & Gatekeeper (evidence receipt first)")
+                        .borders(Borders::ALL),
+                ),
                 chunks[1],
             );
         }
@@ -129,7 +157,11 @@ fn render(f: &mut Frame, view: View, snap: &studio_core::projection::Snapshot) {
                 lines.push(ListItem::new(format!("{} {}", b.session, b.total)));
             }
             f.render_widget(
-                List::new(lines).block(Block::default().title("MCP Registry (capability matrix + burn)").borders(Borders::ALL)),
+                List::new(lines).block(
+                    Block::default()
+                        .title("MCP Registry (capability matrix + burn)")
+                        .borders(Borders::ALL),
+                ),
                 chunks[1],
             );
         }
@@ -142,20 +174,25 @@ fn render(f: &mut Frame, view: View, snap: &studio_core::projection::Snapshot) {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let db_path = std::env::args().nth(1).unwrap_or_else(|| "studio.db".into());
-    let store = StateStore::open(&db_path).unwrap_or_else(|_| StateStore::open_in_memory().unwrap());
+    let db_path = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "studio.db".into());
+    let store =
+        StateStore::open(&db_path).unwrap_or_else(|_| StateStore::open_in_memory().unwrap());
     let mut terminal = ratatui::init();
     let mut view = View::WarRoom;
     loop {
-        let snap = store.snapshot().unwrap_or_else(|_| studio_core::projection::Snapshot {
-            db_age_ms: 0,
-            source: "studio.db".into(),
-            fleet: vec![],
-            stream: vec![],
-            receipts: vec![],
-            burn: vec![],
-            change_seq: 0,
-        });
+        let snap = store
+            .snapshot()
+            .unwrap_or_else(|_| studio_core::projection::Snapshot {
+                db_age_ms: 0,
+                source: "studio.db".into(),
+                fleet: vec![],
+                stream: vec![],
+                receipts: vec![],
+                burn: vec![],
+                change_seq: 0,
+            });
         terminal.draw(|f| render(f, view, &snap))?;
         if event::poll(std::time::Duration::from_millis(POLL_MS))? {
             if let Event::Key(k) = event::read()? {

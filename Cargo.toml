@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "studio-core",
+    "adapters/acp",
+    "adapters/cli",
+    "tui",
+]
+resolver = "2"
