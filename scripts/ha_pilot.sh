@@ -52,7 +52,14 @@ read -r -d '' FIXTURES <<'EOF' || true
 EOF
 
 ask() { # $1=prompt -> prints reply (stdin closed: must not eat our fixture loop)
-  timeout -k 15 240 opencode run --model "$MODEL" "$1" < /dev/null 2>/dev/null | tail -n 30
+  # Run in an EMPTY cwd: the model must not see the repo (this script carries
+  # all golds — v1 baseline cheated by reading it; lesson logged on #1).
+  local empty
+  empty=$(mktemp -d)
+  (cd "$empty" && timeout -k 15 240 opencode run --model "$MODEL" "$1" < /dev/null 2>/dev/null | tail -n 30)
+  local rc=$?
+  rm -rf "$empty"
+  return $rc
 }
 
 echo "== seeding 20 anchored summaries =="
