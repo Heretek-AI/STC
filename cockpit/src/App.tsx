@@ -1,7 +1,9 @@
 // Cockpit views: read projection of studio.db, polled every 100ms (CDC).
 // The UI never owns state — if GUI and studio.db disagree, the GUI is wrong.
 import { useEffect, useState } from "react";
+import type { CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import Providers from "./pages/Providers";
 
 type Snapshot = {
   db_age_ms: number;
@@ -24,22 +26,53 @@ async function pollSnapshot(): Promise<Snapshot> {
   }
 }
 
-export function StaleBadge({ ms }: { ms: number }) {
+function StaleBadge({ ms }: { ms: number }) {
   return <span className="stale">source: studio.db · updated {ms}ms ago</span>;
 }
 
 export default function App() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
+  const [tab, setTab] = useState<"war-room" | "providers">("war-room");
   useEffect(() => {
     const t = setInterval(() => pollSnapshot().then(setSnap).catch(() => {}), 100);
     return () => clearInterval(t);
   }, []);
   if (!snap) return <div>connecting to studio.db…</div>;
+  const tabStyle = (active: boolean): CSSProperties => ({
+    background: active ? "var(--surface-2)" : "var(--surface-0)",
+    color: active ? "var(--text-0)" : "var(--text-dim)",
+    border: "1px solid var(--border)",
+    borderRadius: 6,
+    padding: "6px 12px",
+    fontFamily: "var(--mono)",
+    fontSize: 12,
+    cursor: "pointer",
+  });
   return (
     <div>
       <header>
         <h1>STUDIO</h1> <StaleBadge ms={snap.db_age_ms} />
+        <nav style={{ display: "flex", gap: 8, margin: "8px 0" }}>
+          <button
+            style={tabStyle(tab === "war-room")}
+            onClick={() => setTab("war-room")}
+            aria-pressed={tab === "war-room"}
+          >
+            War Room
+          </button>
+          <button
+            style={tabStyle(tab === "providers")}
+            onClick={() => setTab("providers")}
+            aria-pressed={tab === "providers"}
+          >
+            Providers
+          </button>
+        </nav>
       </header>
+      {tab === "providers" ? (
+        <Providers />
+      ) : (
+        <>
       <section data-view="war-room">
         <h2>War Room</h2>
         {snap.fleet.map((t) => (
@@ -64,6 +97,8 @@ export default function App() {
           <div key={b.session}>{b.session} {b.total}</div>
         ))}
       </section>
+        </>
+      )}
     </div>
   );
 }
