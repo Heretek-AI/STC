@@ -28,8 +28,10 @@ review/
 # Tauri generated
 cockpit/src-tauri/gen/
 .env
-.research
+
+# Research workspace + factory/phase state (local, never committed)
 .research/
 .research/*
 .research/sources/*
-.gitignore
+.factory/
+.archive/

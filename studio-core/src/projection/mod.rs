@@ -34,6 +34,28 @@ pub struct BurnRow {
     pub total: i64,
 }
 
+/// Config-derived runtime settings. This is **not** a database projection:
+/// `runtime_mode` is read from the `STUDIO_LANE_RUNTIME` environment variable
+/// and `autonomy_mode` is a built-in default (a `project_autonomy` table lands
+/// in phase 02+). It is carried in its own clearly-labelled section so it can
+/// never masquerade as having come from `studio.db`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigProjection {
+    /// Provenance marker: `config:...`, never `studio.db`.
+    pub source: String,
+    pub runtime_mode: String,
+    pub autonomy_mode: String,
+}
+
+/// Build the config section. Kept separate from [`Snapshot`]'s DB fields.
+pub fn config_projection() -> ConfigProjection {
+    ConfigProjection {
+        source: "config:env(STUDIO_LANE_RUNTIME)+default".into(),
+        runtime_mode: runtime_mode_from_env(),
+        autonomy_mode: "full".into(),
+    }
+}
+
 /// Fleet-board lane mapping (War Room lanes).
 pub fn lane_for(status: &str) -> &'static str {
     match status {
@@ -49,19 +71,16 @@ pub fn lane_for(status: &str) -> &'static str {
 pub struct Snapshot {
     /// ms since snapshot was taken (staleness badge source).
     pub db_age_ms: u64,
+    /// Provenance of the DB-derived fields below: always `studio.db`.
     pub source: String,
     pub fleet: Vec<TaskRow>,
     pub stream: Vec<EventRow>,
     pub receipts: Vec<ReceiptRow>,
     pub burn: Vec<BurnRow>,
     pub change_seq: i64,
-    /// Lane runtime mode bound to `STUDIO_LANE_RUNTIME` (`rootless` default,
-    /// `privileged-dev` only via explicit override). Cockpit renders a
-    /// persistent dev-mode badge from this; UI never owns it.
-    pub runtime_mode: String,
-    /// Manager autonomy mode for `STUDIO_REPO` (`full` default, `advisory`
-    /// pauses scope/dispatch/merge). Read projection of `project_autonomy`.
-    pub autonomy_mode: String,
+    /// Config-derived settings, in their own section. Deliberately *not* a DB
+    /// projection — see [`ConfigProjection`].
+    pub config: ConfigProjection,
 }
 
 /// Resolve the lane runtime mode from the environment (fail closed to
@@ -80,7 +99,7 @@ pub fn runtime_mode_from_env() -> String {
 
 impl Snapshot {
     pub fn stale_badge(&self) -> String {
-        format!("source: studio.db · updated {}ms ago", self.db_age_ms)
+        format!("source: {} · updated {}ms ago", self.source, self.db_age_ms)
     }
 }
 
@@ -98,19 +117,33 @@ mod tests {
     }
 
     #[test]
-    fn badge_names_db() {
+    fn badge_reflects_source_field() {
+        // Uses a non-default source so a hard-coded "studio.db" in `stale_badge`
+        // makes this test fail (the previous version could not fail).
         let s = Snapshot {
             db_age_ms: 12,
-            source: "studio.db".into(),
+            source: "custom.db".into(),
             fleet: vec![],
             stream: vec![],
             receipts: vec![],
             burn: vec![],
             change_seq: 0,
-            runtime_mode: "rootless".into(),
-            autonomy_mode: "full".into(),
+            config: config_projection(),
         };
-        assert!(s.stale_badge().contains("studio.db"));
+        let badge = s.stale_badge();
+        assert!(badge.contains("custom.db"), "{badge}");
+        assert!(!badge.contains("studio.db"), "{badge}");
+    }
+
+    #[test]
+    fn config_section_declares_non_db_provenance() {
+        let c = config_projection();
+        assert!(
+            c.source.starts_with("config:"),
+            "config must not masquerade as a DB projection: {}",
+            c.source
+        );
+        assert!(!c.source.contains("studio.db"));
     }
 
     #[test]
@@ -156,5 +189,7 @@ mod tests {
             .fleet
             .iter()
             .any(|t| t.id == "t1" && t.lane == "ready"));
+        // D7: the config section must not claim to be a DB projection.
+        assert!(snap2.config.source.starts_with("config:"));
     }
 }

@@ -1,0 +1,130 @@
+{
+  "phase": "03-tool-gateway",
+  "title": "Dynamic MCP gateway / Tool Lens (Pillar 3)",
+  "program": "stc-greenfield",
+  "goal": "A dynamic MCP gateway: slice per-role tool manifests (Allow/OnDemand/Deny), load full tool schemas on demand, detect write-intent, and cap context overflow. Fail closed on unknown tools with a typed reason.",
+  "acceptance": [
+    "MCP registry loads from manifest",
+    "Allow/OnDemand/Deny slicing works",
+    "lazy schema load keeps index bounded",
+    "unknown tool denied typed",
+    "write-detect + overflow tested"
+  ],
+  "brief": "Port studio-core/src/mcp/* behind the Q9 bar. Preserve fail-closed posture: unknown tools deny typed, never silently widen. Keep tool_open-on-demand semantics; do not preload all schemas.",
+  "verdict": "pending",
+  "evidence": [
+    {
+      "claim": "Scope authority: 20 settled user decisions",
+      "hash": "86b6c81b505caccdffed71d0ca5139047cf4bd693e838791ab306025a52a9af7",
+      "pointer": "file://.research/frontier.json",
+      "status": "VERIFIED_HASH"
+    },
+    {
+      "claim": "Beta red-team dossier exists for P1 scope (alpha+audit never ran)",
+      "hash": "082c5c6e1bc543996d2372206e7ca8123ba02e2f60e5108f53e01c19832bb768",
+      "pointer": "file://.research/scratchpads/scope_01_engine_state_isolation/beta_dossier.json",
+      "status": "FILE_HASH_ONLY",
+      "note": "alpha_completed=false -> its internal claims are HYPOTHESIS unless re-verified below"
+    },
+    {
+      "claim": "Both swarms failed: alpha_dossier.json missing",
+      "hash": "353302ede044f92957b48ea2b5bf66fec3ebf315c8e58a04eea9dfb8e66bbe9a",
+      "pointer": "file://.research/manifest.json",
+      "status": "NEGATIVE_KNOWLEDGE"
+    },
+    {
+      "claim": "SQLite rolls back partial transactions after crash/power failure",
+      "hash": "988dd43eb8751ebfa4d0b7331cefc3000cc2e9eb6a7882a2175f7381b71dc993",
+      "quote": "If an application crash, or an operating-system crash, or even a power failure occurs in the middle of a transaction, the partially written transaction should be automatically rolled back the next time the database file is accessed.",
+      "status": "VERIFIED",
+      "confidence": 0.98,
+      "source": "sqlite.org/howtocorrupt.html"
+    },
+    {
+      "claim": "close() cancels POSIX advisory locks for the whole process (fatal for multi-fd worktree lock hygiene)",
+      "hash": "988dd43eb8751ebfa4d0b7331cefc3000cc2e9eb6a7882a2175f7381b71dc993",
+      "quote": "One particularly pernicious problem is that the close() system call will cancel all POSIX advisory locks on the same file for all threads and all file descriptors in the process.",
+      "status": "VERIFIED",
+      "confidence": 0.98,
+      "source": "sqlite.org/howtocorrupt.html"
+    },
+    {
+      "claim": "SQLite permits many concurrent readers but exactly one writer",
+      "hash": "0c3f296a637568cbdf908b58b44212f0f52a63ce5dc8805bdeaf343b9514aa81",
+      "quote": "SQLite supports multiple simultaneous read transactions coming from separate database connections, possibly in separate threads or processes, but only one simultaneous write transaction.",
+      "status": "VERIFIED",
+      "confidence": 0.98,
+      "source": "sqlite.org/lang_transaction.html"
+    },
+    {
+      "claim": "WAL grows without bound if readers never release (checkpoint starvation)",
+      "hash": "b7a994eabc0b091c5434e9900d40730c2299e51f09da58e7f5505d874d116a6e",
+      "quote": "if a database has many concurrent overlapping readers and there is always at least one active reader, then no checkpoints will be able to complete and hence the WAL file will grow without bound.",
+      "status": "VERIFIED",
+      "confidence": 0.98,
+      "source": "sqlite.org/wal.html"
+    },
+    {
+      "claim": "SQLite FS writes amplify disk use (~20% over db size)",
+      "hash": "ba784e48b87c344a3c030706f37e097ba7495a483e9255574bf37999796b353e",
+      "quote": "the database file will be 1,024,512,000 bytes in size and the test1.dir directory will use 1,228,800,000 bytes of space (according to \"du -k\"), about 20% more than the database.",
+      "status": "VERIFIED",
+      "confidence": 0.98,
+      "source": "sqlite.org/fasterthanfs.html"
+    },
+    {
+      "claim": "git-worktree docs archived (beta quotes did not normalize-match -> UNVERIFIED)",
+      "hash": "c8e9ce749f861b2545350673b096538ff1974949e6269490e53fbbf6fa206dc1",
+      "pointer": "file://.research/sources/c8e9ce749f861b2545350673b096538ff1974949e6269490e53fbbf6fa206dc1.md",
+      "status": "FILE_HASH_ONLY"
+    },
+    {
+      "claim": "v1 MCP registry \u2014 port candidate under Q9 bar",
+      "hash": "4396baade9cdacac6a91d95c0473643b63436dbcf8c772cdb42bc967e57b8096",
+      "pointer": "file://studio-core/src/mcp/registry.rs",
+      "status": "FILE_HASH_ONLY",
+      "note": ""
+    },
+    {
+      "claim": "v1 dep set; v2 adds axum+tower in P4",
+      "hash": "ceb5eb2bb0791ab29743357ebc9669ee948aefc4cfed9af5a57614604b44340d",
+      "pointer": "file://studio-core/Cargo.toml",
+      "status": "FILE_HASH_ONLY",
+      "note": ""
+    }
+  ],
+  "hashes": {
+    "frontier": "86b6c81b505caccdffed71d0ca5139047cf4bd693e838791ab306025a52a9af7",
+    "beta_dossier": "082c5c6e1bc543996d2372206e7ca8123ba02e2f60e5108f53e01c19832bb768",
+    "verified_web_sources": {
+      "988dd43e...": "sqlite howtocorrupt",
+      "0c3f296a...": "sqlite lang_transaction",
+      "b7a994ea...": "sqlite wal",
+      "ba784e48...": "sqlite fasterthanfs"
+    },
+    "v1_source_files": {
+      "studio-core/src/state/mod.rs": "dbc6bf00233ebe76bf6ce397a36f7690adf22d04024f1d193d45402cd2db8503",
+      "studio-core/src/ledger/mod.rs": "da33d6bcdc69352332c1f5bf8a87dcbec2a9316819ff2f398ecb4cf81d94c252",
+      "studio-core/src/projection/mod.rs": "3600ef7d48ac6c1c325b49d3f976c1995b4fa75b62fdcf48aef5465c7c633c4f",
+      "studio-core/src/worktree/mod.rs": "9d5ff6b23191ffd76975a5b9b68e14462d599a4c464dbba3f51655ec8e1052ca",
+      "studio-core/src/dag/mod.rs": "9f4ba4cea50525a604c455e8c51309e4db5c244d315a5fff8d65fec90d463e4b",
+      "studio-core/src/verify/mod.rs": "c1e49e97f6429dec4604dbcf76e3e4a27fa577284c0e0a82254dddce1ac8c29f",
+      "studio-core/src/mcp/registry.rs": "4396baade9cdacac6a91d95c0473643b63436dbcf8c772cdb42bc967e57b8096",
+      "studio-core/src/roles/mod.rs": "a414bc61fb12a41c11fe188c806efdaec0719be2de13fb5ec2ecd1464d8731ab",
+      "studio-core/src/memory/store.rs": "37d76f7675ba3c59107748a175cf0eda082d2c5f6754f4888508bc3bdab4582c",
+      "studio-core/Cargo.toml": "ceb5eb2bb0791ab29743357ebc9669ee948aefc4cfed9af5a57614604b44340d",
+      "Cargo.toml": "b8ca97370c04cce0ed1723baf36ec8781854f9c967ebef1798aedb110cda55df"
+    }
+  },
+  "swarm_status": {
+    "cycles_used": 1,
+    "max_cycles": 5,
+    "brainstorm": "FAILED alpha_dossier.json missing",
+    "darkharvest": "FAILED alpha_dossier.json missing"
+  },
+  "qa": {
+    "seat_a": null,
+    "seat_b": null,
+    "retries": 0
+  }
+}

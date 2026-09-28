@@ -7,8 +7,13 @@ import Providers from "./pages/Providers";
 
 type Snapshot = {
   db_age_ms: number;
-  runtime_mode: string;
-  autonomy_mode: string;
+  source?: string;
+  // Config-derived settings live in their own section (never a DB projection):
+  // `source` is `config:env(...)`, not `studio.db`. Legacy top-level fields are
+  // kept optional for back-compat with older servers.
+  config?: { source: string; runtime_mode: string; autonomy_mode: string };
+  runtime_mode?: string;
+  autonomy_mode?: string;
   fleet: { id: string; kind: string; status: string; lane: string }[];
   stream: { seq: number; kind: string; payload: string }[];
   receipts: { id: string; task_id: string; kind: string; evidence: string }[];
@@ -28,8 +33,13 @@ async function pollSnapshot(): Promise<Snapshot> {
   }
 }
 
-function StaleBadge({ ms }: { ms: number }) {
-  return <span className="stale">source: studio.db · updated {ms}ms ago</span>;
+function StaleBadge({ snap }: { snap: Snapshot }) {
+  // Provenance is the projection's own `source`; never a hard-coded label.
+  return (
+    <span className="stale">
+      source: {snap.source ?? "unknown"} · updated {snap.db_age_ms}ms ago
+    </span>
+  );
 }
 
 const LANE_COLORS: Record<string, string> = {
@@ -202,13 +212,11 @@ function autonomyStyleKey(mode: string): string {
 }
 
 function runtimeModeOf(snap: Snapshot): string {
-  if (snap.runtime_mode) return snap.runtime_mode;
-  return "rootless";
+  return snap.config?.runtime_mode ?? snap.runtime_mode ?? "rootless";
 }
 
 function autonomyModeOf(snap: Snapshot): string {
-  if (snap.autonomy_mode) return snap.autonomy_mode;
-  return "full";
+  return snap.config?.autonomy_mode ?? snap.autonomy_mode ?? "full";
 }
 
 function AutonomyBadge({ mode }: { mode: string }) {
@@ -216,7 +224,7 @@ function AutonomyBadge({ mode }: { mode: string }) {
   return (
     <span
       className={key === "advisory" ? "autonomy-advisory" : "autonomy-full"}
-      title="source: studio.db project_autonomy (per-project dial, default full)"
+      title="source: config (STUDIO_LANE_RUNTIME defaults; project_autonomy lands in phase 02)"
       style={AUTONOMY_STYLES[key]}
     >
       {autonomyLabel(mode)}
@@ -229,7 +237,7 @@ function RuntimeBadge({ mode }: { mode: string }) {
   return (
     <span
       className={key === "dev" ? "runtime-dev" : "runtime-rootless"}
-      title="source: studio.db snapshot.runtime_mode (STUDIO_LANE_RUNTIME)"
+      title="source: config (env STUDIO_LANE_RUNTIME) — not a studio.db projection"
       style={RUNTIME_STYLES[key]}
     >
       {runtimeLabel(mode)}
@@ -263,7 +271,7 @@ export default function App() {
   return (
     <div className="cockpit">
       <header>
-        <h1>STUDIO</h1> <StaleBadge ms={snap.db_age_ms} />
+        <h1>STUDIO</h1> <StaleBadge snap={snap} />
         <RuntimeBadge mode={runtimeModeOf(snap)} />
         <AutonomyBadge mode={autonomyModeOf(snap)} />
         {pollError && <ErrorBanner message={pollError} />}

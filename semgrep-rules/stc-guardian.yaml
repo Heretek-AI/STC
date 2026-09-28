@@ -39,3 +39,29 @@ rules:
           - metavariable-regex:
               metavariable: $MOD
               regex: (?i)^(?!os(\.|$)|sys(\.|$)|json(\.|$)|re(\.|$)|pathlib(\.|$)|subprocess(\.|$)|typing(\.|$)|dataclasses(\.|$)|requests(\.|$)|pytest(\.|$)).*
+  # --- Rust coverage for the v2 studio-core/studio-cli tree -----------------
+  # The secret rule mirrors the Python/JS one for Rust `let`/`const` bindings.
+  - id: stc-rust-hardcoded-secret
+    languages: [rust]
+    severity: ERROR
+    message: "STC Guardian: hardcoded secret material (use {{STUDIO_SECRET:label}} placeholders)"
+    patterns:
+      - pattern-either:
+          - pattern: let $KEY = "...";
+          - pattern: let mut $KEY = "...";
+          - pattern: 'const $KEY: &str = "...";'
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: (?i).*(api_key|apikey|secret|password|passwd|access_token|auth_token).*
+  # Rust has no eval/exec. The equivalent dangerous sink is a process command
+  # whose program/args are built by string formatting (injectable), which is
+  # precisely NOT a literal and NOT a plain variable path.
+  - id: stc-rust-command-injection-sink
+    languages: [rust]
+    severity: ERROR
+    message: "STC Guardian: process command built from a formatted string (possible injection sink)"
+    patterns:
+      - pattern-either:
+          - pattern: std::process::Command::new(format!(...))
+          - pattern: tokio::process::Command::new(format!(...))
+          - pattern: Command::new(format!(...))
