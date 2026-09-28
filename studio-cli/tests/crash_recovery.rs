@@ -98,11 +98,21 @@ fn sigkill_storm_leaves_consistent_db_and_zero_orphans() {
             "--worktree-root",
             &root,
         ]);
+        // gc exits 0 when clean, 1 when it reaped/refused (report not clean)
+        // — matching `verify`'s contract. Only exit >= 2 is a hard failure.
+        let gc_code = gc.status.code().unwrap_or(99);
         assert!(
-            gc.status.success(),
-            "round {round}: gc failed: {}",
+            gc_code <= 1,
+            "round {round}: gc hard-failed (exit {gc_code}): {}",
             String::from_utf8_lossy(&gc.stderr)
         );
+        if gc_code == 1 {
+            let gc_report: serde_json::Value = serde_json::from_slice(&gc.stdout).unwrap();
+            assert_eq!(
+                gc_report["clean"], false,
+                "round {round}: gc exit 1 must mean a non-clean report: {gc_report}"
+            );
+        }
 
         let verify = studio(&[
             "verify",

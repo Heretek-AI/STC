@@ -12,13 +12,14 @@
     "gate order runs clean"
   ],
   "brief": "Create branch v2-greenfield off main; archive v1 (.factory/.roadmap/.research/.fallow) to .archive/v1 then clear. Scaffold workspace studio-core (state, ledger, projection) + studio-cli. Greenfield v2 schema, no v1 migration. Port {state,ledger,projection,worktree} ONLY if tests pass + clippy clean in the v2 tree; else rewrite. Enforce single-writer discipline (VERIFIED: one write txn at a time) and CHECKPOINT the WAL to avoid unbounded growth (VERIFIED: WAL grows without bound under continuous readers). Be careful with POSIX advisory locks across fd close (VERIFIED). studio status must work WITHOUT a live daemon.",
-  "verdict": "pending",
+  "verdict": "pass \u2014 CLOSED (dual QA pass, rounds 7+8). Pending explicit user sign-off per loop gate.",
   "evidence": [
     {
       "claim": "Scope authority: 20 settled user decisions",
-      "hash": "86b6c81b505caccdffed71d0ca5139047cf4bd693e838791ab306025a52a9af7",
+      "hash": "f282054839f73a67dedef41dfea50abdca0ab336dd55d046118b405173caf002",
       "pointer": "file://.research/frontier.json",
-      "status": "VERIFIED_HASH"
+      "status": "VERIFIED_HASH",
+      "note": "frontier AMENDED 2026-09-27 (carryover: drop tui, keep adapters) \u2014 hash changed from 86b6c81b505c\u2026 to f282054839f7\u2026"
     },
     {
       "claim": "Beta red-team dossier exists for P1 scope (alpha+audit never ran)",
@@ -114,7 +115,7 @@
     }
   ],
   "hashes": {
-    "frontier": "86b6c81b505caccdffed71d0ca5139047cf4bd693e838791ab306025a52a9af7",
+    "frontier": "f282054839f73a67dedef41dfea50abdca0ab336dd55d046118b405173caf002",
     "beta_dossier": "082c5c6e1bc543996d2372206e7ca8123ba02e2f60e5108f53e01c19832bb768",
     "verified_web_sources": {
       "988dd43e...": "sqlite howtocorrupt",
@@ -143,8 +144,183 @@
     "darkharvest": "FAILED alpha_dossier.json missing"
   },
   "qa": {
-    "seat_a": null,
-    "seat_b": null,
-    "retries": 0
-  }
+    "seat_a": "pass (round 8)",
+    "seat_b": "pass (round 8)",
+    "retries": 8,
+    "note": "Round 8: both seats pass on the same tree. QA-A: 67/67, migration fix + corollaries verified. QA-B: 6 attack surfaces, zero breaks (unstatable-keep, half-pair, rapid-open races, in-place writes, keep-case preservation, full regression). First agreement in 8 rounds."
+  },
+  "open_blockers": [
+    {
+      "id": "SEC-A-TOCTOU-01",
+      "severity": "CRITICAL",
+      "class": "symlink escape / arbitrary external deletion",
+      "status": "FIXED & QA-VERIFIED (QA-A r4 pre-fix control + QA-B r4 A1-A4 held)",
+      "claim_falsified": "Retry 2 declared defect class A3 (symlink escape) FIXED. QA-B retry 3 falsified that claim: only the STATIC symlink vector is closed.",
+      "repro": "gc classifies `wt/RACE` as RealDir during collection; after ~1.0s swap it: `rm -rf wt/RACE; ln -s <victim> wt/RACE`. Result: GC_EXIT=0, swept_dirs include victim/src, victim/precious.txt, victim/.git; `refused_symlinks` does NOT contain RACE; victim git repo destroyed ('not a git repository').",
+      "window": "entire untracked-content processing phase (~2.5-3s observed, attacker-inflatable); succeeds on FIRST deliberate attempt",
+      "bypassed_control": "the static `symlink_self_test` never exercises a post-classification swap, which is why QA seat A passed it",
+      "required_fix": "fd-anchored traversal: pin the root with open(O_DIRECTORY|O_NOFOLLOW), walk via openat(dirfd,name,O_DIRECTORY|O_NOFOLLOW), delete via unlinkat(dirfd,name[,AT_REMOVEDIR]); NEVER re-resolve path components. Linux may use openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS) with an openat fallback.",
+      "dependency_ruling": "`libc` crate only (already transitive) \u2014 user ruling 2026-09-27; cap-std/rustix NOT approved",
+      "corroboration": [
+        "QA-B r3 deterministic exploit",
+        "darkharvest 0.7.12: 'openat2/RESOLVE_BENEATH, no competitor implements this'",
+        "beta swarm probe: 'remove_dir_all follows symlinks on Linux (security risk)'",
+        "programmer residual #1 (lstat-based, not fd-anchored)"
+      ],
+      "owner": "programmer retry 3 (waived)"
+    },
+    {
+      "id": "HON-C3-01",
+      "severity": "MEDIUM",
+      "class": "dishonest metric",
+      "status": "FIXED & QA-VERIFIED (QA-A r4 + QA-B r4; C3 honest across 5 bound configs)",
+      "defect": "`peak WAL` is sampled AFTER enforce_wal_bound checkpoints/truncates, so it prints 0 while an external sampler observes 53592 / 61832 bytes. PHASE-RECEIPT.md claims an 'honest peak'.",
+      "required_fix": "sample the peak BEFORE checkpointing; printed peak must be >= external sampler."
+    },
+    {
+      "id": "RO-VERIFY-01",
+      "severity": "MEDIUM",
+      "class": "read-only contract violation",
+      "status": "FIXED & QA-VERIFIED (QA-A r4 + QA-B r4; C3 honest across 5 bound configs)",
+      "defect": "`verify` CREATES a missing worktree root (mode 755) and nested `a/b/c/wt`, despite IntegrityReport docs saying 'Never mutates'.",
+      "required_fix": "do not create; absent root \u2192 typed unclean result."
+    },
+    {
+      "id": "RO-STATUS-01",
+      "severity": "MEDIUM",
+      "class": "read-only media failure",
+      "status": "FIXED & QA-VERIFIED (QA-A r4 + QA-B r4; C3 honest across 5 bound configs)",
+      "defect": "`status` exits 2 on a read-only directory ('sqlite: attempt to write a readonly database') because the WAL read path needs -shm/-wal sidecar writes.",
+      "required_fix": "read-only open without sidecar writes; exit 0 when the DB is readable, documenting any degradation."
+    },
+    {
+      "id": "LOCK-B-iii-01",
+      "severity": "LOW",
+      "class": "lock exclusivity edge",
+      "status": "PARTIALLY FIXED \u2014 original vector verified closed (QA-A r5 + QA-B r4), but the fix's own exemption is bypassable (see B-EXEMPT-FORGE-01)",
+      "defect": "`mv shared shared.old; mkdir shared` while daemon-A holds the root flock \u2192 daemon-B runs concurrently (new inode). Destruction NOT demonstrated.",
+      "required_fix": "recovery must never reap a worktree that git reports as `locked` (our engine locks its own); applies to both gc and daemon boot recovery.",
+      "receipt_claim_falsified": "PHASE-RECEIPT.md asserted 'no destruction was demonstrated'. QA-B r4 falsified it: /tmp/opencode/qa-b4/B3.sh and B4.sh show a second engine's gc AND daemon boot recovery deleting the first engine's live, git-locked worktrees (P_in_B_swept=1, P_exists_after=no, repoA_still_lists_P=1; first daemon then crashes on its vanished worktree).",
+      "threat_model_ruling": "user ruling 2026-09-28: vector is IN scope (also fires on accidental two-engine/stale-root misconfiguration)."
+    },
+    {
+      "id": "TEST-F-01",
+      "severity": "LOW",
+      "class": "methodology hole",
+      "status": "FIXED & QA-VERIFIED (QA-A r4 + QA-B r4; C3 honest across 5 bound configs)",
+      "defect": "crash_storm.sh hardcodes BIN=$ROOT/target/debug/studio while building via `cargo build` (respects CARGO_TARGET_DIR) \u2192 silently tests a STALE binary.",
+      "required_fix": "resolve the actual build output path (cargo message-format / --target-dir echo)."
+    },
+    {
+      "id": "A5-GC-DOS-01",
+      "severity": "LOW (non-blocking, recorded per user ruling)",
+      "class": "liveness DoS",
+      "status": "RECORDED RESIDUAL",
+      "defect": "A symlink injected after subtree_has_symlink() returns false (or during remove_tree's walk) aborts gc with exit 2. Repeatable 4/4. Non-destructive (victim survives; remove_tree/open_child_dir refuse symlinks).",
+      "note": "Receipt's 'intra-syscall race' wording understates it: it is a repeatable same-user liveness DoS."
+    },
+    {
+      "id": "A6-FALLBACK-PARITY-01",
+      "severity": "LOW (non-blocking; dead code on target kernel)",
+      "class": "platform parity gap",
+      "status": "RECORDED RESIDUAL",
+      "defect": "The openat2 fallback (open(O_NOFOLLOW)) follows an INTERMEDIATE root symlink: parity proof shows FALLBACK follows while RESOLVE_NO_SYMLINKS returns ELOOP. Only reachable on kernels without openat2."
+    },
+    {
+      "id": "B-EXEMPT-FORGE-01",
+      "severity": "CRITICAL",
+      "class": "ledger-trust bypass \u2192 cross-engine destruction",
+      "status": "PARTIALLY FIXED \u2014 forged-row vector closed (QA-A r6), but binding defeated by DB copy (see A-DB-COPY-01)",
+      "defect": "The `own_abandoned` exemption unlocks+reaps any path named in a `creating` row of the RUNNING engine's ledger, with zero ownership check. A second engine (same repo/root) forges `INSERT INTO worktrees VALUES('<victim-live>','<same repo>','forged','creating',\u2026)` into its OWN dbB, runs `gc`, and destroys the first engine's live locked worktree: `reaped_creating` + `reaped_git_orphans` contain it, dir + admin entry gone, exit 0. Re-opens the exact B(ii) class the fix closed. (Different-repo variant held \u2014 hole is precisely the same-repo model.)",
+      "required_fix": "exemption must prove ownership (e.g. creator token written into the worktree at creation and matched at reap; or equivalent) \u2014 never trust ledger content alone."
+    },
+    {
+      "id": "C-NEWLINE-01",
+      "severity": "CRITICAL (+honesty violation)",
+      "class": "porcelain parse bypass \u2192 deletion while reporting refusal",
+      "status": "FIXED & QA-VERIFIED (QA-A r6 + QA-B r6 attack B held incl. fallback, CR/TAB/unicode/long)",
+      "defect": "`git worktree add \"$ROOT/evil<LF>locked\"` succeeds (git allows newlines). `parse_worktree_porcelain` splits on lines and matches `== \"locked\"`, recording a truncated PHANTOM path. One `gc`: `refused_locked` names the phantom while `swept_dirs` includes the REAL newline path's `.git` \u2014 the entire registered worktree is deleted while the report claims refusal, exit 0.",
+      "required_fix": "harden the parse (porcelain -z / NUL-delimited if available, else reject any path containing control characters) \u2014 refuse to manage newline-bearing paths, never reap them; exact-match must cover the real path."
+    },
+    {
+      "id": "A-STALE-LOCK-01",
+      "severity": "LOW (availability note, fail-closed)",
+      "class": "uncollectable garbage",
+      "status": "RECORDED \u2014 operator story + gc exit code in scope of third waiver",
+      "defect": "N abandoned git-locked worktrees with no ledger row are refused forever (only `own_abandoned` unlocks, which needs a row). Manual `git worktree unlock` works. Fail-closed for safety, never-self-healing. Also: `gc` exits 0 while reporting `clean:false` + refusals (exit-code gap)."
+    },
+    {
+      "id": "A-DB-COPY-01",
+      "severity": "CRITICAL",
+      "class": "identity binding defeated by normal operator action",
+      "status": "PARTIALLY FIXED \u2014 copy-after-migration diverges (QA-A r7), but pre-fix-shape copies share the id (see D-MIGRATION-01)",
+      "defect": "`cp studio.db backup.db` clones `engine_meta`, so two engines share one engine_id. The copy + forged creating row + same repo/root reaps the victim (`reaped_creating` + `reaped_git_orphans`, dir + admin gone, forged row consumed, gc_exit=1). `init` on the copy keeps the cloned id (NOT regenerated). Backup/restore/cp is a normal operator action \u2014 the ownership proof is silently voided by it.",
+      "required_fix": "bind engine identity beyond the DB file (e.g. store (st_dev,st_ino) at init; regenerate engine_id when the live file identity differs), so a copy diverges on first open while the original keeps its id."
+    },
+    {
+      "id": "C-UNLOCK-TRAP-01",
+      "severity": "CRITICAL (operator-mediated destruction)",
+      "class": "documented remedy destroys the victim",
+      "status": "FIXED & QA-VERIFIED (QA-A r7: unlock-then-gc still refused; release recourse; per-DB; help documents the story)",
+      "defect": "Refused forged rows linger forever (no CLI clears them; only hand sqlite DELETE). The documented remedy (`git worktree unlock` then `gc`) causes gc to REAP the foreign worktree (dir gone, admin gone, verify flips clean). Attacker plants the row; operator following --help destroys the victim. Receipt discloses lingering but not the trap.",
+      "required_fix": "persist refused paths per DB (once refused, never auto-reaped) + an explicit operator release command; unlocking must not re-arm auto-reap of a refused path."
+    },
+    {
+      "id": "D-MIGRATION-01",
+      "severity": "CRITICAL (attacker-reachable, not just legacy)",
+      "class": "migration keep-and-bind preserves a shared id",
+      "status": "FIXED & QA-VERIFIED (QA-A r8 + QA-B r8: half-pair, races, in-place writes, keep-cases all held)",
+      "defect": "A DB in pre-fix shape (engine_id, no dev/ino) copied BEFORE first post-fix open: both files keep-and-bind the SAME id (orig binds orig ino, copy binds copy ino \u2014 id shared). Forged-row kill chain via the copy reaps the victim (dir + marker gone, shared id in report). Worse than legacy: an attacker can MANUFACTURE pre-fix shape with one sqlite DELETE of the pair, so this is reachable, not historical.",
+      "required_fix": "regenerate (never keep) when no stored pair exists. Safe because: current-binary init writes id+pair atomically, so 'no pair' implies 'created by an older binary', and older binaries never issued studio:<id> lock reasons \u2014 nothing live can reference the discarded id. Verify the atomicity; add a regression test (pre-fix-shape copy \u2192 divergent ids, victim refused). Also correct the receipt/docs in-place-overwrite claim (reality diverges \u2014 safer than documented)."
+    }
+  ],
+  "waivers": [
+    {
+      "date": "2026-09-27",
+      "by": "explicit user ruling",
+      "what": "3-retry cap waived for ONE more phase-01 rework",
+      "conditions": "approach prescribed: fd-anchored traversal; `libc` only (no cap-std/rustix); the QA-B a4/a5 exploit must become a permanent regression test"
+    },
+    {
+      "date": "2026-09-28",
+      "by": "explicit user ruling",
+      "what": "SECOND waiver \u2014 one more phase-01 rework beyond the exhausted budget",
+      "conditions": "fix prescribed: recovery must refuse to reap git-`locked` worktrees (gc + daemon boot recovery); receipt's falsified claim must be corrected; A5/A6 recorded as residuals; the git-locked refusal must be a permanent regression test"
+    },
+    {
+      "date": "2026-09-28",
+      "by": "explicit user ruling",
+      "what": "THIRD waiver \u2014 one more phase-01 rework (programmer invocation #6)",
+      "conditions": "fix prescribed: (B) own_abandoned exemption must prove ownership via engine-identity nonce in the git lock reason, matched against the live lock at reap; (C) stateful porcelain parse + refuse (never reap) any path containing control characters, and reject control-char slugs at create; stale-lock operator story documented + gc exit code reflects refusals. Permanent regression tests for forged-row refusal and newline refusal."
+    },
+    {
+      "date": "2026-09-28",
+      "by": "explicit user ruling",
+      "what": "FOURTH waiver \u2014 one more phase-01 rework (programmer invocation #7)",
+      "conditions": "fix prescribed: (A) bind engine_id to file identity \u2014 store (st_dev,st_ino) at init, regenerate id when the live file differs, copies diverge on first open; (C) persist refused paths per DB (once refused, never auto-reaped) + explicit operator release command; unlocking must never re-arm auto-reap. Permanent regression tests for DB-copy divergence and unlock-trap refusal."
+    },
+    {
+      "date": "2026-09-28",
+      "by": "explicit user ruling",
+      "what": "FIFTH waiver \u2014 one more phase-01 rework (programmer invocation #8)",
+      "conditions": "fix prescribed and bounded: regenerate (never keep) engine_id when no stored (dev,ino) pair exists; verify init writes id+pair atomically; regression test for pre-fix-shape copy divergence; correct the in-place-overwrite doc claim. Manager's standing position: if QA-B breaks this, next step is the 01b split with no further waivers."
+    }
+  ],
+  "citation_corrections": [
+    {
+      "date": "2026-09-28",
+      "what": "frontier hash drift",
+      "from": "86b6c81b505caccdffed71d0ca5139047cf4bd693e838791ab306025a52a9af7",
+      "to": "f282054839f73a67dedef41dfea50abdca0ab336dd55d046118b405173caf002",
+      "reason": "Manager amended the frontier for the adapters/tui ruling; GOAL.md/dossier still cited the pre-amendment hash. Caught by QA-A O1 and QA-B F."
+    }
+  ],
+  "residuals_accepted": [
+    "A5-GC-DOS-01 (repeatable same-user gc DoS, non-destructive)",
+    "A6-FALLBACK-PARITY-01 (openat2 fallback gap, dead code on target kernel)",
+    "A-STALE-LOCK-01 (manual-unlock operator story; gc exit reflects refusals)",
+    "stolen engine_id re-lock (out of scope: same-user can rm -rf)",
+    "refused_paths DELETE / release-aimed-at-foreign-DB (out of scope: same-user DB writer = full compromise)",
+    "release without confirmation (hardening note for later)"
+  ]
 }

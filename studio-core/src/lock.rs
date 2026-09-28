@@ -24,6 +24,27 @@
 //! second `File::open` — even in the same process — is refused.
 //!
 //! `studio gc` takes the same lock, which makes GC daemon-exclusive.
+//!
+//! ## Residual: directory-inode replacement (LOCK-B-iii-01)
+//!
+//! `flock` is keyed to an inode. A same-user process can `mv shared shared.old;
+//! mkdir shared` and hand a *new* inode to a second engine. Replacing just one
+//! inode does **not** admit a second engine: the lock is taken on **two**
+//! independent resources, `<repo>/.git` and the worktree root, so the other
+//! holds (pinned by
+//! `replacing_the_root_directory_inode_does_not_grant_a_second_engine`).
+//!
+//! Replacing **both** inodes — or copying `.git` into a fresh repo — *does*
+//! admit a second engine; that is inherent to any inode-based lock. QA-B (r4)
+//! demonstrated this is destructive: a second engine with an empty ledger swept
+//! the first engine's live, git-`locked` `ready` worktrees
+//! (`/tmp/opencode/qa-b4/B3.sh`, `B4.sh`; the first daemon then crashed on its
+//! vanished worktree). The destruction is closed *independently of the lock*:
+//! recovery now refuses to reap any worktree git reports as `locked`
+//! (LOCK-B-iii, see `recovery`), and the sweep is fd-anchored
+//! (SEC-A-TOCTOU-01), so no concurrent process can make `gc` follow a symlink
+//! out of the root. We still do not attempt to over-lock ancestors (that would
+//! refuse unrelated projects sharing a parent directory).
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -212,5 +233,29 @@ mod tests {
         std::fs::create_dir_all(&not_repo).unwrap();
         let err = StudioLock::acquire(&not_repo, &dir.path().join("wt")).unwrap_err();
         assert!(matches!(err, LockError::NotARepo(_)), "{err:?}");
+    }
+
+    /// LOCK-B-iii-01: `mv shared shared.old; mkdir shared` swaps the worktree
+    /// root inode while the engine holds its flock. This pins the current,
+    /// documented behaviour: the second engine is still refused because the
+    /// repo `.git` lock (a separate, stable resource) is also held.
+    #[test]
+    fn replacing_the_root_directory_inode_does_not_grant_a_second_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = scratch_repo(dir.path());
+        let root = dir.path().join("shared");
+        let held = StudioLock::acquire(&repo, &root).unwrap();
+
+        // Swap the root directory for a fresh inode.
+        std::fs::rename(&root, dir.path().join("shared.old")).unwrap();
+        std::fs::create_dir(&root).unwrap();
+
+        let err = StudioLock::acquire(&repo, &root).unwrap_err();
+        assert!(
+            matches!(err, LockError::AlreadyHeld(_)),
+            "replacing only the root inode must not admit a second engine: {err:?}"
+        );
+
+        drop(held);
     }
 }

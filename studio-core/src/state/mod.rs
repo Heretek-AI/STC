@@ -32,6 +32,7 @@
 //! and the SQLite lock lives only on the one long-lived writer connection.
 
 use rusqlite::{Connection, OpenFlags};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
@@ -86,6 +87,23 @@ CREATE TABLE IF NOT EXISTS worktrees(
     state      TEXT NOT NULL DEFAULT 'creating',
     created_ms INTEGER NOT NULL
 );
+
+-- B-EXEMPT-FORGE-01: persistent per-database engine identity. Generated once
+-- (see `StateStore::engine_id`), never changed afterwards. The git lock reason
+-- `studio:<engine_id>` written at worktree-create time is the ownership proof
+-- that lets recovery tell our own abandoned half-creates apart from a forged
+-- `creating` row naming another engine's live locked worktree.
+CREATE TABLE IF NOT EXISTS engine_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+-- A-DB-COPY-01: the file identity (`engine_dev`/`engine_ino`, see
+-- `StateStore::engine_id`) the id above was generated for. A `cp` clones the
+-- id but NOT the inode, so the copy diverges on first open.
+-- C-UNLOCK-TRAP-01: persisted refusals. Once a path is refused (locked,
+-- forged, control-char, or registered-worktree refusal) it is NEVER auto-reaped
+-- by `gc` or daemon boot recovery, regardless of later lock state — unlocking a
+-- refused path does NOT re-arm auto-reap. The ONLY way out is the explicit
+-- operator command `studio release <path>` (see `StateStore::clear_refused`).
+-- First refusal wins (`INSERT OR IGNORE` keeps the original reason/time).
+CREATE TABLE IF NOT EXISTS refused_paths(path TEXT PRIMARY KEY, reason TEXT NOT NULL, at_ms INTEGER NOT NULL);
 
 CREATE TABLE IF NOT EXISTS change_log(
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -158,6 +176,56 @@ fn canonical_path(p: &str) -> String {
         .into_owned()
 }
 
+/// Fresh random engine identity: 16 bytes as lowercase hex. No new
+/// dependencies: `/dev/urandom` on unix, otherwise a (pid, nanos, counter)
+/// tuple hashed with the std hasher. The value is only ever generated once per
+/// database (guarded by `INSERT OR IGNORE`), so even the weaker fallback is a
+/// stable unique-enough nonce — and it never leaves the local machine.
+fn generate_engine_id() -> String {
+    #[cfg(unix)]
+    {
+        if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+            use std::io::Read as _;
+            let mut bytes = [0u8; 16];
+            if f.read_exact(&mut bytes).is_ok() {
+                return hex::encode(bytes);
+            }
+        }
+    }
+    use std::hash::{Hash as _, Hasher as _};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static FALLBACK_CTR: AtomicU64 = AtomicU64::new(0);
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    std::time::SystemTime::now().hash(&mut h);
+    std::process::id().hash(&mut h);
+    FALLBACK_CTR.fetch_add(1, Ordering::Relaxed).hash(&mut h);
+    format!("{:016x}{:016x}", h.finish(), {
+        let mut h2 = std::collections::hash_map::DefaultHasher::new();
+        FALLBACK_CTR.load(Ordering::Relaxed).hash(&mut h2);
+        std::time::SystemTime::now().hash(&mut h2);
+        h2.finish()
+    })
+}
+
+/// File identity of the live database file: `(st_dev, st_ino)` (A-DB-COPY-01).
+/// `None` when the file cannot be stated (in-memory stores, non-unix
+/// platforms): callers then keep the stored id — an unstatable file is not
+/// proof of a copy, so we fail open on identity but stay fail-closed on
+/// destruction (the lock-reason check still applies).
+#[cfg(unix)]
+fn live_file_identity(db_path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(db_path).ok().map(|m| (m.dev(), m.ino()))
+}
+
+/// Non-unix fallback: no inode identity available, so no copy divergence is
+/// enforced here (documented residual; the lock-reason check still refuses
+/// forged rows from a *different* engine id).
+#[cfg(not(unix))]
+fn live_file_identity(_db_path: &Path) -> Option<(u64, u64)> {
+    None
+}
+
 /// Defence-in-depth (C1): the database and its WAL/SHM sidecars are created
 /// 0600, not the process umask's default. This does not stop a *same-user*
 /// O_RDONLY reader (nothing local can — see the graceful-degradation path in
@@ -180,6 +248,37 @@ fn restrict_db_permissions(db_path: &str) {
 #[cfg(not(unix))]
 fn restrict_db_permissions(_db_path: &str) {}
 
+/// RO-STATUS-01: a read-only *media* failure (as opposed to a locked/corrupt DB)
+/// is what the `immutable=1` fallback is allowed to answer.
+fn is_readonly_media_error(e: &StateError) -> bool {
+    matches!(
+        e,
+        StateError::Sqlite(rusqlite::Error::SqliteFailure(sf, _))
+            if matches!(
+                sf.code,
+                rusqlite::ErrorCode::ReadOnly | rusqlite::ErrorCode::CannotOpen
+            )
+    )
+}
+
+/// Build a `file:...?immutable=1` URI for a path, percent-encoding everything
+/// outside the URI-unreserved set plus `/` so `?`, `#` and `%` in a path cannot
+/// be mistaken for URI syntax.
+fn sqlite_immutable_uri(path: &str) -> String {
+    let mut s = String::with_capacity(path.len() + 24);
+    s.push_str("file:");
+    for b in path.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                s.push(b as char);
+            }
+            _ => s.push_str(&format!("%{b:02X}")),
+        }
+    }
+    s.push_str("?immutable=1");
+    s
+}
+
 /// Durable state store. Cheap to clone by `Arc`; all writers serialize on one
 /// connection.
 #[derive(Debug)]
@@ -187,6 +286,9 @@ pub struct StateStore {
     conn: Mutex<Connection>,
     /// Path of the on-disk database (`None` for in-memory stores).
     db_path: Option<PathBuf>,
+    /// RO-STATUS-01: set when a read-only open had to degrade (e.g. immutable
+    /// read on read-only media). Honest provenance for the projection.
+    degradation: Option<String>,
 }
 
 impl StateStore {
@@ -203,9 +305,14 @@ impl StateStore {
         let store = Self {
             conn: Mutex::new(conn),
             db_path: Some(PathBuf::from(path)),
+            degradation: None,
         };
         store.init_schema()?;
         store.check_version()?;
+        // A-DB-COPY-01: bind (or re-bind) the engine id to this file on EVERY
+        // writable open. A `cp` clone diverges to its own id here, before any
+        // recovery pass can honour a forged row with the cloned id.
+        store.engine_id()?;
         restrict_db_permissions(path);
         Ok(store)
     }
@@ -217,6 +324,7 @@ impl StateStore {
         let store = Self {
             conn: Mutex::new(conn),
             db_path: None,
+            degradation: None,
         };
         store.init_schema()?;
         store.check_version()?;
@@ -225,19 +333,63 @@ impl StateStore {
 
     /// Read-only open for the CLI projection path. Never creates the DB and
     /// never runs DDL, so `studio status` works with no daemon running.
+    ///
+    /// RO-STATUS-01: on read-only media the WAL read path would need to write
+    /// `-shm`/`-wal` sidecars and fail with `attempt to write a readonly
+    /// database`. When the plain read-only open fails for that reason we retry
+    /// with SQLite's `immutable=1` URI, which reads the main database file
+    /// without creating or touching any sidecar. The degradation is recorded
+    /// (and reported by `studio status`) because `immutable=1` also ignores any
+    /// uncheckpointed `-wal` frames.
     pub fn open_readonly(path: &str) -> Result<Self, StateError> {
         if !Path::new(path).exists() {
             return Err(StateError::NotFound(path.to_string()));
         }
-        let flags = OpenFlags::SQLITE_OPEN_READ_ONLY;
-        let conn = Connection::open_with_flags(path, flags)?;
+        match Self::open_readonly_impl(path, false) {
+            Ok(store) => Ok(store),
+            Err(primary) => {
+                if !is_readonly_media_error(&primary) {
+                    return Err(primary);
+                }
+                match Self::open_readonly_impl(path, true) {
+                    Ok(mut store) => {
+                        let wal = format!("{path}-wal");
+                        let wal_len = std::fs::metadata(&wal).map(|m| m.len()).unwrap_or(0);
+                        store.degradation = Some(format!(
+                            "immutable read-only open (no sidecar writes); {wal_len}-byte -wal \
+                             deliberately ignored — projection reflects the last checkpoint"
+                        ));
+                        Ok(store)
+                    }
+                    Err(_) => Err(primary),
+                }
+            }
+        }
+    }
+
+    fn open_readonly_impl(path: &str, immutable: bool) -> Result<Self, StateError> {
+        let (target, flags) = if immutable {
+            (
+                sqlite_immutable_uri(path),
+                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+            )
+        } else {
+            (path.to_string(), OpenFlags::SQLITE_OPEN_READ_ONLY)
+        };
+        let conn = Connection::open_with_flags(target, flags)?;
         conn.busy_timeout(std::time::Duration::from_millis(250))?;
         let store = Self {
             conn: Mutex::new(conn),
             db_path: Some(PathBuf::from(path)),
+            degradation: None,
         };
         store.check_version()?;
         Ok(store)
+    }
+
+    /// RO-STATUS-01: why a read-only open degraded, if it did.
+    pub fn read_degradation(&self) -> Option<&str> {
+        self.degradation.as_deref()
     }
 
     fn configure(conn: &Connection, wal: bool) -> Result<(), StateError> {
@@ -303,6 +455,218 @@ impl StateStore {
             |r| r.get(0),
         )?;
         Ok(v.parse().unwrap_or(-1))
+    }
+
+    /// Persistent per-database engine identity (B-EXEMPT-FORGE-01), bound to the
+    /// database FILE identity (A-DB-COPY-01). Generated once on first call
+    /// (`INSERT OR IGNORE`, so concurrent openers agree), read back on every
+    /// later call — including after a process restart, since it lives in the
+    /// database file. The daemon stamps worktrees it locks with
+    /// `studio:<engine_id>` (see `worktree::lock_reason_for`); recovery only
+    /// unlocks+reaps an abandoned `creating` path whose live git lock reason
+    /// matches this id, so a forged ledger row alone can never authorize
+    /// destroying another engine's live locked worktree.
+    ///
+    /// A-DB-COPY-01: `cp studio.db backup.db` clones `engine_meta`, so without
+    /// binding two engines would share one id and the copy plus a forged
+    /// `creating` row would reap the victim. Every call therefore compares the
+    /// live file's `(st_dev, st_ino)` against the stored pair:
+    /// - match (normal restart, same file) → keep the id;
+    /// - differ (copy, restore-to-new-path, replace) → REGENERATE the id and
+    ///   store the new pair, so the copy diverges on first open and its forged
+    ///   row mismatches the victim's `studio:<original-id>` lock reason;
+    /// - no stored pair yet (pre-fix databases, or an attacker `DELETE` of the
+    ///   pair — D-MIGRATION-01) → REGENERATE the id and store the new pair,
+    ///   exactly like a copy. Keeping the id here would let a pre-fix-shaped
+    ///   DB copied before its first post-fix open share one id in both files,
+    ///   replaying the forged-row kill chain; and since pre-fix binaries never
+    ///   issued `studio:<id>` lock reasons, nothing live can reference the
+    ///   discarded id, so regenerating breaks nothing attributable;
+    /// - unstatable file (in-memory, non-unix) → keep the id, bind nothing.
+    ///
+    /// Edge cases (explicit): hardlinks share one inode, so they share one id —
+    /// CORRECT, it is the same file. `init` creating a fresh DB mints a new id
+    /// plus the fresh identity. An in-place overwrite of the same path
+    /// (plain `cp src.db dst.db` truncating onto dst's inode) does NOT keep
+    /// the id: the stored pair travels with the source content and mismatches
+    /// the destination's live identity, so the destination mints a fresh
+    /// (third) id on next open — the safe direction (it diverges, and a
+    /// forged row from either file refuses against the other). Only a
+    /// byte-identical self-rewrite of a file's own content keeps the id.
+    ///
+    /// Never call this on a read-only store: generating/regenerating the id is
+    /// a write and fails closed on read-only media.
+    pub fn engine_id(&self) -> Result<String, StateError> {
+        // Stat outside the write transaction; the stored pair is re-read inside
+        // it, so two openers racing on the same copy converge (last writer
+        // wins, both re-read the winner).
+        let live = self.db_path.as_deref().and_then(live_file_identity);
+        self.with_write(|conn| {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS engine_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+            )?;
+            let get = |key: &str| -> Result<Option<String>, StateError> {
+                conn.query_row(
+                    "SELECT value FROM engine_meta WHERE key=?",
+                    rusqlite::params![key],
+                    |r| r.get(0),
+                )
+                .map(Some)
+                .or_else(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                    other => Err(StateError::from(other)),
+                })
+            };
+            let put = |key: &str, value: &str| -> Result<(), StateError> {
+                conn.execute(
+                    "INSERT OR REPLACE INTO engine_meta(key,value) VALUES(?,?)",
+                    rusqlite::params![key, value],
+                )?;
+                Ok(())
+            };
+            let existing: Option<String> = get("engine_id")?;
+            let stored_dev = get("engine_dev")?.and_then(|v| v.parse::<u64>().ok());
+            let stored_ino = get("engine_ino")?.and_then(|v| v.parse::<u64>().ok());
+            match (existing, stored_dev, stored_ino, live) {
+                (Some(id), Some(d), Some(i), Some((ld, li))) if d == ld && i == li => Ok(id),
+                (Some(_), _, _, Some((ld, li))) => {
+                    // Stored pair differs from live (copy/restore/replace) or
+                    // is absent/incomplete (pre-fix DB, or an attacker `DELETE`
+                    // of the pair — D-MIGRATION-01): REGENERATE like a copy.
+                    // Keep-and-bind here would leave a pre-fix-shaped DB and
+                    // its `cp` clone sharing one id, replaying the forged-row
+                    // kill chain. Safe: pre-fix binaries never issued
+                    // `studio:<id>` lock reasons, so nothing live references
+                    // the discarded id. Stored atomically with the new pair
+                    // (same `with_write` transaction as every arm here).
+                    let id = generate_engine_id();
+                    put("engine_id", &id)?;
+                    put("engine_dev", &ld.to_string())?;
+                    put("engine_ino", &li.to_string())?;
+                    let stored: String = conn.query_row(
+                        "SELECT value FROM engine_meta WHERE key='engine_id'",
+                        [],
+                        |r| r.get(0),
+                    )?;
+                    Ok(stored)
+                }
+                (Some(id), _, _, _) => {
+                    // Unstatable file (in-memory, non-unix): no identity to
+                    // bind or compare, so keep the id and bind nothing.
+                    Ok(id)
+                }
+                (None, _, _, _) => {
+                    let id = generate_engine_id();
+                    conn.execute(
+                        "INSERT OR IGNORE INTO engine_meta(key,value) VALUES('engine_id',?)",
+                        rusqlite::params![id],
+                    )?;
+                    if let Some((ld, li)) = live {
+                        conn.execute(
+                            "INSERT OR IGNORE INTO engine_meta(key,value) VALUES('engine_dev',?)",
+                            rusqlite::params![ld.to_string()],
+                        )?;
+                        conn.execute(
+                            "INSERT OR IGNORE INTO engine_meta(key,value) VALUES('engine_ino',?)",
+                            rusqlite::params![li.to_string()],
+                        )?;
+                    }
+                    let stored: String = conn.query_row(
+                        "SELECT value FROM engine_meta WHERE key='engine_id'",
+                        [],
+                        |r| r.get(0),
+                    )?;
+                    Ok(stored)
+                }
+            }
+        })
+    }
+
+    /// C-UNLOCK-TRAP-01: record a refused path. First refusal wins
+    /// (`INSERT OR IGNORE` keeps the original reason and time). `reason` is one
+    /// of `locked` (git-`locked` refusal, incl. forged rows), `control`
+    /// (control-character path), `worktree` (registered but untracked), or
+    /// `persisted` (re-refused on a stored refusal).
+    pub fn record_refused(&self, path: &str, reason: &str) -> Result<(), StateError> {
+        let canon = canonical_path(path);
+        let ts = self.now_ms();
+        self.with_write(|conn| {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS refused_paths(path TEXT PRIMARY KEY, reason TEXT NOT NULL, at_ms INTEGER NOT NULL)",
+            )?;
+            conn.execute(
+                "INSERT OR IGNORE INTO refused_paths(path,reason,at_ms) VALUES(?,?,?)",
+                rusqlite::params![canon, reason, ts],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// All persisted refused paths (canonical form), consulted by recovery
+    /// before ANY reap: a refused path is never auto-reaped, regardless of
+    /// later lock state.
+    pub fn refused_set(&self) -> Result<HashSet<String>, StateError> {
+        let conn = self.lock()?;
+        let has: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='refused_paths'",
+            [],
+            |r| r.get(0),
+        )?;
+        if has == 0 {
+            return Ok(HashSet::new());
+        }
+        let mut stmt = conn.prepare("SELECT path FROM refused_paths")?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows.into_iter().map(|p| canonical_path(&p)).collect())
+    }
+
+    /// The stored refusal reason for `path`, if it was ever refused.
+    pub fn refused_reason(&self, path: &str) -> Result<Option<String>, StateError> {
+        let canon = canonical_path(path);
+        let conn = self.lock()?;
+        let has: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='refused_paths'",
+            [],
+            |r| r.get(0),
+        )?;
+        if has == 0 {
+            return Ok(None);
+        }
+        conn.query_row(
+            "SELECT reason FROM refused_paths WHERE path=?",
+            rusqlite::params![canon],
+            |r| r.get(0),
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(StateError::from(other)),
+        })
+    }
+
+    /// Explicit operator recourse (the ONLY path from refused to reaped):
+    /// forget the persisted refusal for `path`. Returns true when a refusal
+    /// was actually removed. This does NOT unlock git, delete data, or drop
+    /// ledger rows — the next `gc` treats the path as an ordinary orphan, so
+    /// running this on a foreign LIVE worktree and then unlocking it lets `gc`
+    /// reap it. That is the operator's responsibility (see `studio release`).
+    pub fn clear_refused(&self, path: &str) -> Result<bool, StateError> {
+        let canon = canonical_path(path);
+        let removed = std::cell::Cell::new(false);
+        self.with_write(|conn| {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS refused_paths(path TEXT PRIMARY KEY, reason TEXT NOT NULL, at_ms INTEGER NOT NULL)",
+            )?;
+            let n = conn.execute(
+                "DELETE FROM refused_paths WHERE path=?",
+                rusqlite::params![canon],
+            )?;
+            removed.set(n > 0);
+            Ok(())
+        })?;
+        Ok(removed.get())
     }
 
     /// Run `f` inside exactly one `BEGIN IMMEDIATE` transaction on the single
@@ -1107,6 +1471,41 @@ mod tests {
         assert!(matches!(err, StateError::NotFound(_)));
     }
 
+    /// RO-STATUS-01: a read-only *directory* (no sidecar writes possible) must
+    /// not make `status` fail. The immutable fallback reads the DB and records
+    /// the honest degradation.
+    #[cfg(unix)]
+    #[test]
+    fn read_only_directory_open_succeeds_without_sidecars() {
+        use std::os::unix::fs::PermissionsExt;
+        // Root ignores directory permissions, so the failure cannot be provoked.
+        // SAFETY: geteuid takes no arguments and cannot fail.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("studio.db");
+        {
+            let s = StateStore::open(path.to_str().unwrap()).unwrap();
+            s.upsert_task("t1", "coder", "building").unwrap();
+            s.checkpoint().unwrap();
+        }
+        let _ = std::fs::remove_file(dir.path().join("studio.db-wal"));
+        let _ = std::fs::remove_file(dir.path().join("studio.db-shm"));
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+        let opened = StateStore::open_readonly(path.to_str().unwrap());
+        // Restore before asserting so the tempdir can always be cleaned up.
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let store = opened.expect("status must succeed on read-only media");
+        assert!(
+            store.read_degradation().is_some(),
+            "the read-only fallback must be reported honestly"
+        );
+        let snap = store.snapshot().unwrap();
+        assert!(snap.fleet.iter().any(|t| t.id == "t1"), "{snap:?}");
+    }
+
     #[test]
     fn integrity_is_ok_after_reopen() {
         let dir = tempfile::tempdir().unwrap();
@@ -1122,5 +1521,195 @@ mod tests {
         // Recovery is idempotent: re-opening again is a no-op.
         let s2 = StateStore::open(path.to_str().unwrap()).unwrap();
         assert_eq!(s2.integrity_check().unwrap(), "ok");
+    }
+
+    // --- A-DB-COPY-01: engine id is bound to the DB file identity ---
+
+    /// `cp` clones `engine_meta` but not the inode: the copy MUST diverge to
+    /// its own id on first open, while the original keeps its id.
+    #[cfg(unix)]
+    #[test]
+    fn db_copy_diverges_engine_id_while_original_keeps_its_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let orig = dir.path().join("studio.db");
+        let copy = dir.path().join("backup.db");
+        let id_orig = {
+            let s = StateStore::open(orig.to_str().unwrap()).unwrap();
+            let id = s.engine_id().unwrap();
+            s.upsert_task("t1", "coder", "building").unwrap();
+            s.checkpoint().unwrap();
+            id
+        };
+        // The store is dropped (connection closed) before the copy, so the
+        // copy is self-contained; the WAL is truncated by the checkpoint.
+        std::fs::copy(&orig, &copy).unwrap();
+        // Sanity: the clone really does carry the same id bytes.
+        let cloned: String = rusqlite::Connection::open(&copy)
+            .unwrap()
+            .query_row(
+                "SELECT value FROM engine_meta WHERE key='engine_id'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(cloned, id_orig, "precondition: cp clones engine_meta");
+        // First open of the copy diverges …
+        let id_copy = StateStore::open(copy.to_str().unwrap())
+            .unwrap()
+            .engine_id()
+            .unwrap();
+        assert_ne!(
+            id_copy, id_orig,
+            "a copied database must not keep the victim's engine id"
+        );
+        // … and the divergence is stable, while the original is unaffected.
+        let id_copy2 = StateStore::open(copy.to_str().unwrap())
+            .unwrap()
+            .engine_id()
+            .unwrap();
+        assert_eq!(id_copy, id_copy2, "the copy keeps its new id");
+        let id_orig2 = StateStore::open(orig.to_str().unwrap())
+            .unwrap()
+            .engine_id()
+            .unwrap();
+        assert_eq!(id_orig, id_orig2, "the original keeps its id");
+        // The original's data survived the whole exercise.
+        let s = StateStore::open(orig.to_str().unwrap()).unwrap();
+        assert_eq!(s.snapshot().unwrap().fleet.len(), 1);
+    }
+
+    /// A hardlink is the SAME file (same inode): sharing the id is correct.
+    #[cfg(unix)]
+    #[test]
+    fn hardlink_shares_the_engine_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let orig = dir.path().join("studio.db");
+        let link = dir.path().join("link.db");
+        let id_orig = StateStore::open(orig.to_str().unwrap())
+            .unwrap()
+            .engine_id()
+            .unwrap();
+        std::fs::hard_link(&orig, &link).unwrap();
+        let id_link = StateStore::open(link.to_str().unwrap())
+            .unwrap()
+            .engine_id()
+            .unwrap();
+        assert_eq!(id_orig, id_link, "a hardlink is the same file");
+    }
+
+    /// D-MIGRATION-01: pre-fix databases have an id but no stored file
+    /// identity. The first open after upgrade must REGENERATE (not
+    /// keep-and-bind): a pre-fix-shaped DB copied before its first post-fix
+    /// open would otherwise share one id in both files, replaying the
+    /// forged-row kill chain — and the shape is attacker-reachable with one
+    /// `sqlite DELETE` of the pair. Safe: pre-fix binaries never issued
+    /// `studio:<id>` lock reasons, so nothing live references the discarded
+    /// id. The new id is stable afterwards, with the live pair bound.
+    #[cfg(unix)]
+    #[test]
+    fn missing_file_identity_regenerates_a_fresh_id_and_binds_the_pair() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("studio.db");
+        let id = StateStore::open(path.to_str().unwrap())
+            .unwrap()
+            .engine_id()
+            .unwrap();
+        // Simulate a pre-fix row: drop the file-identity keys by hand.
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute_batch("DELETE FROM engine_meta WHERE key IN ('engine_dev','engine_ino')")
+            .unwrap();
+        let id2 = StateStore::open(path.to_str().unwrap())
+            .unwrap()
+            .engine_id()
+            .unwrap();
+        assert_ne!(id, id2, "a pre-fix-shaped DB must regenerate, not keep");
+        // And a second open is a stable no-op.
+        let id3 = StateStore::open(path.to_str().unwrap())
+            .unwrap()
+            .engine_id()
+            .unwrap();
+        assert_eq!(id2, id3);
+    }
+
+    /// D-MIGRATION-01: a pre-fix-shaped DB (id, no pair) copied BEFORE the
+    /// first post-fix open: opening both must DIVERGE — neither file may
+    /// keep serving the legacy id.
+    #[cfg(unix)]
+    #[test]
+    fn prefix_shaped_copy_diverges_on_first_open_of_both_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let orig = dir.path().join("studio.db");
+        let copy = dir.path().join("backup.db");
+        let id_legacy = {
+            let s = StateStore::open(orig.to_str().unwrap()).unwrap();
+            let id = s.engine_id().unwrap();
+            s.upsert_task("t1", "coder", "building").unwrap();
+            s.checkpoint().unwrap();
+            id
+        };
+        // Simulate pre-fix shape, then copy before any post-fix open.
+        rusqlite::Connection::open(&orig)
+            .unwrap()
+            .execute_batch("DELETE FROM engine_meta WHERE key IN ('engine_dev','engine_ino')")
+            .unwrap();
+        std::fs::copy(&orig, &copy).unwrap();
+        let id_orig = StateStore::open(orig.to_str().unwrap())
+            .unwrap()
+            .engine_id()
+            .unwrap();
+        let id_copy = StateStore::open(copy.to_str().unwrap())
+            .unwrap()
+            .engine_id()
+            .unwrap();
+        assert_ne!(
+            id_orig, id_legacy,
+            "the original must abandon the legacy id"
+        );
+        assert_ne!(id_copy, id_legacy, "the copy must abandon the legacy id");
+        assert_ne!(
+            id_orig, id_copy,
+            "pre-fix-shaped original and copy must not share an id"
+        );
+        // Both are stable afterwards.
+        assert_eq!(
+            id_orig,
+            StateStore::open(orig.to_str().unwrap())
+                .unwrap()
+                .engine_id()
+                .unwrap()
+        );
+        assert_eq!(
+            id_copy,
+            StateStore::open(copy.to_str().unwrap())
+                .unwrap()
+                .engine_id()
+                .unwrap()
+        );
+    }
+
+    // --- C-UNLOCK-TRAP-01: refused paths persist per DB ---
+
+    #[test]
+    fn refused_paths_roundtrip_persist_and_release() {
+        let (_dir, s) = file_store();
+        assert!(s.refused_set().unwrap().is_empty());
+        assert_eq!(s.refused_reason("/x/a").unwrap(), None);
+        s.record_refused("/x/a", "locked").unwrap();
+        s.record_refused("/x/b", "control").unwrap();
+        // First refusal wins.
+        s.record_refused("/x/a", "worktree").unwrap();
+        let set = s.refused_set().unwrap();
+        assert!(set.iter().any(|p| p.ends_with("x/a")));
+        assert!(set.iter().any(|p| p.ends_with("x/b")));
+        assert_eq!(s.refused_reason("/x/a").unwrap().as_deref(), Some("locked"));
+        // Release removes exactly one path.
+        assert!(s.clear_refused("/x/a").unwrap());
+        assert!(!s.clear_refused("/x/a").unwrap());
+        assert_eq!(s.refused_reason("/x/a").unwrap(), None);
+        assert_eq!(
+            s.refused_reason("/x/b").unwrap().as_deref(),
+            Some("control")
+        );
     }
 }

@@ -68,7 +68,29 @@ enum Cmd {
     ///
     /// GC is daemon-exclusive: it takes the same engine lock as `daemon` and
     /// refuses to run while a daemon holds it.
+    ///
+    /// REFUSED-PATH operator story (C-UNLOCK-TRAP-01): an abandoned git-locked
+    /// worktree with no ledger row of ours (or a forged row we refused) is
+    /// refused, and the refusal is PERSISTED in this DB — `git worktree unlock
+    /// <path>` followed by `gc` still refuses (unlocking never re-arms
+    /// auto-reap; the old unlock-then-gc remedy was a trap). The ONLY path
+    /// from refused to reaped is `studio release <path>` (explicit operator
+    /// intent), then `gc`. Running `release` on a foreign LIVE worktree and
+    /// then unlocking it lets `gc` reap it — the operator's responsibility.
+    /// Exit code is 1 whenever the report is not clean (reaped, refused, or
+    /// otherwise unclean), matching `verify`'s contract.
     Gc(Paths),
+    /// Forget a persisted gc refusal for one path (C-UNLOCK-TRAP-01 recourse).
+    ///
+    /// This is the ONLY path from refused to reaped: it drops the stored
+    /// refusal (and a lingering `creating` ledger row for the path, if any —
+    /// the wedge previously clearable only by hand-`sqlite3 DELETE`). The next
+    /// `gc` then treats the path as an ordinary orphan (a still-locked foreign
+    /// worktree is refused again by its live lock; an unlocked stale path is
+    /// reaped). It does NOT unlock git or delete data. Releasing a foreign
+    /// LIVE worktree and then unlocking it lets `gc` destroy it — the
+    /// operator's responsibility.
+    Release(ReleaseArgs),
     /// Read-only integrity check; exit 1 if anything is unclean.
     Verify(Paths),
 }
@@ -101,6 +123,15 @@ struct DaemonArgs {
     wal_hard_ceiling_bytes: Option<u64>,
 }
 
+#[derive(clap::Args)]
+struct ReleaseArgs {
+    /// Path to the v2 database holding the refusal.
+    #[arg(long, default_value = "studio.db")]
+    db: String,
+    /// Worktree path whose persisted refusal should be forgotten.
+    path: String,
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -120,7 +151,7 @@ async fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             store.checkpoint()?;
             println!(
                 "{}",
-                json!({"ok": true, "db": p.db, "schema_version": store.schema_version()?})
+                json!({"ok": true, "db": p.db, "schema_version": store.schema_version()?, "engine_id": store.engine_id()?})
             );
             Ok(ExitCode::SUCCESS)
         }
@@ -132,6 +163,12 @@ async fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
                 m.insert("schema_version".into(), json!(store.schema_version()?));
                 m.insert("worktrees".into(), json!(store.worktree_paths()?.len()));
                 m.insert("read_only".into(), json!(true));
+                // RO-STATUS-01: honest provenance when a read-only media open
+                // had to degrade (immutable read; uncheckpointed WAL ignored).
+                if let Some(d) = store.read_degradation() {
+                    m.insert("degraded".into(), json!(true));
+                    m.insert("degradation".into(), json!(d));
+                }
             }
             println!("{}", serde_json::to_string_pretty(&v)?);
             Ok(ExitCode::SUCCESS)
@@ -148,6 +185,7 @@ async fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
                 "{}",
                 json!({
                     "clean": report.clean(),
+                    "engine_id": store.engine_id()?,
                     "integrity_ok": report.integrity_ok,
                     "integrity_detail": report.integrity_detail,
                     "reaped_creating": report.reaped_creating,
@@ -155,6 +193,52 @@ async fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
                     "dropped_missing_rows": report.dropped_missing_rows,
                     "swept_dirs": report.swept_dirs,
                     "refused_symlinks": report.refused_symlinks,
+                    "refused_worktrees": report.refused_worktrees,
+                    "refused_locked": report.refused_locked,
+                    "refused_control_paths": report.refused_control_paths,
+                    "refused_persisted": report.refused_persisted,
+                })
+            );
+            // Like `verify`: a report that is not clean exits non-zero, so a
+            // refused (never reaped — unlocking does NOT re-arm auto-reap; use
+            // `studio release <path>`) or otherwise active recovery is visible
+            // to callers and scripts.
+            Ok(if report.clean() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            })
+        }
+        Cmd::Release(a) => {
+            let store = StateStore::open(&a.db)?;
+            let canon = studio_core::worktree::normalize_path(Path::new(&a.path))
+                .to_string_lossy()
+                .into_owned();
+            let prior_reason = store.refused_reason(&canon)?;
+            // The lingering wedge: a refused forged `creating` row is kept as
+            // evidence by gc; releasing the path drops it too, so the refusal
+            // is clearable with no hand-sqlite. `ready` rows are never touched.
+            let creating_row = store.worktree_rows()?.into_iter().any(|(p, s)| {
+                s == "creating"
+                    && studio_core::worktree::normalize_path(Path::new(&p))
+                        .to_string_lossy()
+                        .into_owned()
+                        == canon
+            });
+            let mut ledger_row_removed = false;
+            let released = store.clear_refused(&canon)?;
+            if released && creating_row {
+                store.delete_worktree(&canon)?;
+                ledger_row_removed = true;
+            }
+            println!(
+                "{}",
+                json!({
+                    "released": released,
+                    "path": canon,
+                    "prior_reason": prior_reason,
+                    "ledger_creating_row_removed": ledger_row_removed,
+                    "warning": "release does not unlock git or delete data; the next gc treats the path as an ordinary orphan — releasing a foreign LIVE worktree and then unlocking it lets gc reap it (operator's responsibility)",
                 })
             );
             Ok(ExitCode::SUCCESS)
@@ -172,6 +256,7 @@ async fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
                     "creating_rows": report.creating_rows,
                     "missing_rows": report.missing_rows,
                     "invalid_state_rows": report.invalid_state_rows,
+                    "root_missing": report.root_missing,
                     "outside_root_rows": report.outside_root_rows,
                     "repo_mismatch_rows": report.repo_mismatch_rows,
                     "non_directory_rows": report.non_directory_rows,
@@ -228,6 +313,11 @@ async fn run_daemon(
     eprintln!("[daemon] boot recovery: clean={}", boot.clean());
     store.checkpoint()?;
 
+    // B-EXEMPT-FORGE-01: our persistent ownership proof, stamped as the git
+    // lock reason on every worktree we create (stable across restarts).
+    let engine_id = store.engine_id()?;
+    let lock_reason = studio_core::worktree::lock_reason_for(&engine_id);
+
     let wal_bound = resolve_wal_bound(wal_bound_arg);
     let wal_hard_ceiling = resolve_wal_hard_ceiling(wal_hard_arg, wal_bound);
     eprintln!("[daemon] wal soft bound={wal_bound} bytes hard ceiling={wal_hard_ceiling} bytes");
@@ -250,9 +340,15 @@ async fn run_daemon(
             let path = WorktreeManager::path_for(&root, "scratch", &slug);
             let ps = path.to_string_lossy().to_string();
             store.begin_worktree(&ps, &repo.to_string_lossy(), &slug)?;
-            wm.create(&repo, &path, "HEAD", "daemon").await?;
+            wm.create(&repo, &path, "HEAD", &lock_reason).await?;
             store.mark_worktree_ready(&ps)?;
         }
+
+        // HON-C3-01: sample the WAL peak *before* any checkpoint in this
+        // iteration. Sampling after `enforce_wal_bound`/the periodic checkpoint
+        // reported 0 while an external sampler observed 53–61 KB.
+        peak_wal = peak_wal.max(store.wal_size_bytes()?);
+
         if i.is_multiple_of(64) {
             store.checkpoint()?;
         }
