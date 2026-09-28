@@ -1,8 +1,6 @@
 [workspace]
 members = [
     "studio-core",
-    "adapters/acp",
-    "adapters/cli",
-    "tui",
+    "studio-cli",
 ]
 resolver = "2"

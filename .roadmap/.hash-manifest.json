@@ -1,0 +1,20 @@
+{
+  ".research/frontier.json": "86b6c81b505caccdffed71d0ca5139047cf4bd693e838791ab306025a52a9af7",
+  ".research/scratchpads/scope_01_engine_state_isolation/beta_dossier.json": "082c5c6e1bc543996d2372206e7ca8123ba02e2f60e5108f53e01c19832bb768",
+  ".research/manifest.json": "353302ede044f92957b48ea2b5bf66fec3ebf315c8e58a04eea9dfb8e66bbe9a",
+  "studio-core/src/state/mod.rs": "dbc6bf00233ebe76bf6ce397a36f7690adf22d04024f1d193d45402cd2db8503",
+  "studio-core/src/ledger/mod.rs": "da33d6bcdc69352332c1f5bf8a87dcbec2a9316819ff2f398ecb4cf81d94c252",
+  "studio-core/src/projection/mod.rs": "3600ef7d48ac6c1c325b49d3f976c1995b4fa75b62fdcf48aef5465c7c633c4f",
+  "studio-core/src/worktree/mod.rs": "9d5ff6b23191ffd76975a5b9b68e14462d599a4c464dbba3f51655ec8e1052ca",
+  "studio-core/src/dag/mod.rs": "9f4ba4cea50525a604c455e8c51309e4db5c244d315a5fff8d65fec90d463e4b",
+  "studio-core/src/verify/mod.rs": "c1e49e97f6429dec4604dbcf76e3e4a27fa577284c0e0a82254dddce1ac8c29f",
+  "studio-core/src/mcp/registry.rs": "4396baade9cdacac6a91d95c0473643b63436dbcf8c772cdb42bc967e57b8096",
+  "studio-core/src/roles/mod.rs": "a414bc61fb12a41c11fe188c806efdaec0719be2de13fb5ec2ecd1464d8731ab",
+  "studio-core/src/memory/store.rs": "37d76f7675ba3c59107748a175cf0eda082d2c5f6754f4888508bc3bdab4582c",
+  "studio-core/Cargo.toml": "ceb5eb2bb0791ab29743357ebc9669ee948aefc4cfed9af5a57614604b44340d",
+  "Cargo.toml": "b8ca97370c04cce0ed1723baf36ec8781854f9c967ebef1798aedb110cda55df",
+  "cockpit/src/App.tsx": "750f98aee660a2d0fb0e594eaa26622b823a63f867f01005184fa2fff582c883",
+  "cockpit/src/tokens.css": "bc1fe26f7a440fb128c16911a42202bb36f56ae828fdce59485fdd1bd5bb7b11",
+  "AGENTS.md": "b974ad23e1ae374d85e54150b5c1d9fc72056aa4281ba2e00e356b307ecfa417",
+  "GOAL.md": "dc818e51b728b2272d7f4bb3d334ae8ffb0ddf870dfc4a67a4146a5f49cfa006"
+}

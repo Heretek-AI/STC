@@ -1,8 +1,9 @@
 {
   "search_engine": "duckduckgo",
-  "max_iterations": 10,
+  "max_iterations": 2,
   "divergence_threshold": 0.75,
   "mode": "research",
+  "backend": "auto",
   "cache_raw_markdown": true,
   "license_whitelist": [
     "MIT",
@@ -15,17 +16,11 @@
   "domain_pack": null,
   "agents": {
     "alpha": {
-      "backend": [
-        "claude",
-        "-p"
-      ],
+      "backend": null,
       "model": null
     },
     "beta": {
-      "backend": [
-        "claude",
-        "-p"
-      ],
+      "backend": null,
       "model": null
     }
   }
