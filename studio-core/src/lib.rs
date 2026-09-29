@@ -14,8 +14,13 @@
 //! "SQLite is the only source of truth". It returns in phase 02 (contract
 //! runtime) if a plan ledger is needed, backed by the DB.
 
+pub mod acp;
+pub mod approvals;
 pub mod lock;
+pub mod policy;
 pub mod projection;
 pub mod recovery;
+pub mod roles;
 pub mod state;
+pub mod verify;
 pub mod worktree;

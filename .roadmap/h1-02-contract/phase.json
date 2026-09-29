@@ -1,0 +1,6 @@
+{
+  "phase": "h1-02-contract",
+  "goal": "Implement 02-contract-runtime with harvest annex (9 P02 adoptions + V1/V2/V5); Q9 bar; typed rejections",
+  "acceptance": [],
+  "status": "briefed"
+}

@@ -1,0 +1,800 @@
+{
+  "phase": "harvest-review-01",
+  "title": "Darkharvest cycle-1 gate: review/ corpus adoption roster",
+  "program": "stc-greenfield (accelerated)",
+  "goal": "Determine what STC v2 can take from the review/ corpus to accelerate phases 02-06, with SPDX-attributed hash-verified verdicts, and obtain explicit user approval of the adoption scope.",
+  "evidence": [
+    {
+      "claim": "Frontier settled: 5 user decisions (target = roadmap order data-informed; strict in-scope firewall + variants; depend allowed if license-whitelisted; full loop roster-gated; broad sweep both swarms 25 repos depth 3)",
+      "sha256": "6c2cbb6dce11bb3f5ef4af311b16f81f03e4b89afe240988cfb7cf3e18254d43",
+      "pointer": "file://.factory/frontier.json",
+      "status": "USER_APPROVED_ROUND1"
+    },
+    {
+      "claim": "Darkharvest: 35 per-feature verdicts across phases 02-06, 24 repos torn down, 60 distinct files cited; manager recomputed all 60 citation sha256 = MATCH; 35/35 features carry >=1 citation",
+      "sha256": "17f5ceaaa0a46b78060d402abc2a3087a7d08cf3460604ca6969655682e076e6",
+      "pointer": "file://.research/harvest-review-01/darkharvest/dossier.json",
+      "status": "MANAGER_RECOMPUTED_OK"
+    },
+    {
+      "claim": "Darkharvest human report (matrix, rationale, risks, lockfile notes, DEFERRED, skipped/license guard)",
+      "sha256": "7eace08f3030385171ba7273a804ed01d206b2d29f6dc0713ad74efa11b40f19",
+      "pointer": "file://.research/harvest-review-01/darkharvest/REPORT.md",
+      "status": "HASH_MATCH"
+    },
+    {
+      "claim": "Brainstorm: 9 falsifiable acceleration vectors (V1-V9); manager recomputed 32/32 citation hashes = MATCH",
+      "sha256": "9ed6ddfab988dfe7d69b0a2eaec7fbb1f854060b6bd48004b963c73f88691773",
+      "pointer": "file://.research/harvest-review-01/brainstorm/REPORT.md",
+      "status": "MANAGER_RECOMPUTED_OK"
+    },
+    {
+      "claim": "Live re-check crates.io: acp-http-adapter default/stable 0.4.2, license Apache-2.0, repo rivet-dev/sandbox-agent; 16 releases since 2026-02 (0.x churn noted)",
+      "sha256": "cb859f8eac29ee4188d7d0542dbbcea79d6e4f41eb45ebe052af5add72780bcd",
+      "pointer": "file://.research/harvest-review-01/verification/acp-http-adapter.crates.json",
+      "status": "LIVE_RECHECK"
+    },
+    {
+      "claim": "Live re-check crates.io: ts-rs stable 12.0.1 (dossier pins 11.x to match vibe-kanban 11.1.0), license MIT, repo Aleph-Alpha/ts-rs",
+      "sha256": "1ab2761898dd373c9f787e688e095bdbe74cde72a228ff6b75f72637b60633ad",
+      "pointer": "file://.research/harvest-review-01/verification/ts-rs.crates.json",
+      "status": "LIVE_RECHECK"
+    },
+    {
+      "claim": "License spot-check: vibe-kanban Apache-2.0, oh-my-pi MIT, rivet-dev/sandbox-agent Apache-2.0, nearai/ironclaw dual MIT+Apache-2.0",
+      "sha256": "c71d239df917|16c45f9d6674|ec0c1602f675|3f063a142a85|87964768fb53",
+      "pointer": "file://review/repos/*/LICENSE*",
+      "status": "MANAGER_READ"
+    },
+    {
+      "claim": "Dispatch note: MCP iumbtems_darkharvest/iumbtems_brainstorm both failed (RuntimeError: opencode backend execution failed) \u2014 reported, not debugged; swarms ran via factory subagent roles (darkharvester, brainstormer); no repo code written (git tracked tree unchanged)",
+      "sha256": "N/A",
+      "pointer": "file://.factory/frontier.json#swarm_status",
+      "status": "PROCESS_RECORD"
+    }
+  ],
+  "roster": {
+    "darkharvest": [
+      {
+        "id": "f02-acp-http-adapter",
+        "title": "Published Rust crate: minimal ACP HTTP-to-stdio adapter (acp-http-adapter)",
+        "phase": "02",
+        "verdict": "depend",
+        "license": "Apache-2.0",
+        "source_repo": "rivet-dev/sandbox-agent (Apache-2.0)",
+        "effort_saved": "days",
+        "citation_ids": [
+          "c011"
+        ],
+        "citation_sha256": {
+          "c011": "bf562d6616249a03020dd1293c41f1bb5b0acaf233372c589200959e9be4e9bc"
+        }
+      },
+      {
+        "id": "f02-ic-approvals",
+        "title": "Durable approval store + scoped capability leases + CAS records + auto-approve/persistent-approval policy",
+        "phase": "02",
+        "verdict": "clean-room",
+        "license": "Apache-2.0 (dual MIT OR Apache-2.0)",
+        "source_repo": "nearai/ironclaw (Apache-2.0)",
+        "effort_saved": "week+",
+        "citation_ids": [
+          "c008"
+        ],
+        "citation_sha256": {
+          "c008": "f5bb8dc702d9900cedf75b542c4bb1fdb366796cfda63fdf046f9ba06f415392"
+        }
+      },
+      {
+        "id": "f02-ic-runtime-policy",
+        "title": "Deterministic monotonic runtime-policy resolver (reduce-only, fail-closed, explicit yolo ack, audit round-trip)",
+        "phase": "02",
+        "verdict": "clean-room",
+        "license": "Apache-2.0 (dual MIT OR Apache-2.0)",
+        "source_repo": "nearai/ironclaw (Apache-2.0)",
+        "effort_saved": "days",
+        "citation_ids": [
+          "c009"
+        ],
+        "citation_sha256": {
+          "c009": "4cc1a18df5f7724ddedaaf0c5c9e73508ae9c05ab39e78e70085fa4a171e1416"
+        }
+      },
+      {
+        "id": "f02-ohmpi-acp-gate",
+        "title": "ACP permission gate: fixed required-tool map, 4 permission options, unknown option IDs fail closed, destructive edit-intent inspection",
+        "phase": "02",
+        "verdict": "clean-room",
+        "license": "MIT",
+        "source_repo": "oh-my-pi (MIT)",
+        "effort_saved": "days",
+        "citation_ids": [
+          "c010"
+        ],
+        "citation_sha256": {
+          "c010": "7918ebae503236a7f8db6b77557dd25552c101cf133278416d394b8cf7adf38c"
+        }
+      },
+      {
+        "id": "f02-vk-approvals",
+        "title": "Approval request/status/outcome protocol + in-process approval service",
+        "phase": "02",
+        "verdict": "vendor+clean-room",
+        "license": "Apache-2.0",
+        "source_repo": "BloopAI/vibe-kanban (Apache-2.0)",
+        "effort_saved": "hours",
+        "citation_ids": [
+          "c001",
+          "c002",
+          "c003"
+        ],
+        "citation_sha256": {
+          "c001": "c9d6b38dc6efcf6f72c39ce54fa4347cc9c36041305bcc4ba916cb0e7da2b533",
+          "c002": "3c32da5997d4940fc557c2bbe600d6598e9508c1abee6c8ccbeae560f1dc7949",
+          "c003": "09a8042c814fe3e899831d26381624d51e3941b05b4713472c64d6d2c839be0a"
+        }
+      },
+      {
+        "id": "f02-yylo-lease-fence",
+        "title": "Fencing lease tokens gating every mutating task operation (start/sync/checkpoint/evidence-run)",
+        "phase": "02",
+        "verdict": "clean-room",
+        "license": "MIT",
+        "source_repo": "yylo-dev/yylo (MIT)",
+        "effort_saved": "days",
+        "citation_ids": [
+          "c007"
+        ],
+        "citation_sha256": {
+          "c007": "fbb900ad6ad6e39a63dbeeffb114f27fc4c2f5c41c0db7d21bdcdc9055d4a1d8"
+        }
+      },
+      {
+        "id": "f02-yylo-merge-landing",
+        "title": "Native-git delivery adapter: CAS expected-old ref updates, QUEUED/CONFLICT/GIT_INTEGRATED states, append-only receipts",
+        "phase": "02",
+        "verdict": "clean-room",
+        "license": "MIT",
+        "source_repo": "yylo-dev/yylo (MIT)",
+        "effort_saved": "days",
+        "citation_ids": [
+          "c006"
+        ],
+        "citation_sha256": {
+          "c006": "9e5426a3d6d99d9083fee556befeb8fe9f836f5463d96740fd646dc482332f49"
+        }
+      },
+      {
+        "id": "f02-yylo-receipts",
+        "title": "Versioned execution-envelope/receipt schemas built from provider observations, never assistant prose",
+        "phase": "02",
+        "verdict": "clean-room",
+        "license": "MIT",
+        "source_repo": "yylo-dev/yylo (MIT)",
+        "effort_saved": "days",
+        "citation_ids": [
+          "c004",
+          "c005"
+        ],
+        "citation_sha256": {
+          "c004": "6ed37d179facd0076445ffd2c6da76175dd7d59e4b442e1fb685e9bf45d6d215",
+          "c005": "8f05615667955756339af80135345c60358b9965179717a9475056c9f2099d26"
+        }
+      },
+      {
+        "id": "f02-yylo-risk-tiers",
+        "title": "Risk-tiered validation depth: deterministic candidate risk plan, review sequence bounds, admitted-vs-rejected finding classes",
+        "phase": "02",
+        "verdict": "clean-room",
+        "license": "MIT",
+        "source_repo": "yylo-dev/yylo (MIT)",
+        "effort_saved": "days",
+        "citation_ids": [
+          "c012",
+          "c013"
+        ],
+        "citation_sha256": {
+          "c012": "1c282de21deb4a7a69431c3c20ee6dc2b6f380a0128ee5c0401629c559aef86a",
+          "c013": "82bcea6a0531409e41074b6b7519dbafc6f59fa01e0edc2371d5b3c93bde67e7"
+        }
+      },
+      {
+        "id": "f03-agentdeck-mcppool",
+        "title": "MCP process pool: socket proxy/HTTP server lifecycle, scope launcher, FD-leak regression tests",
+        "phase": "03",
+        "verdict": "clean-room",
+        "license": "MIT",
+        "source_repo": "asheshgoplani/agent-deck (MIT)",
+        "effort_saved": "days",
+        "citation_ids": [
+          "c025",
+          "c026"
+        ],
+        "citation_sha256": {
+          "c025": "b037e3a1d7ca6dc1fe23845eff87ca58cc9351e8ad5fd4f0f0cd91204f42bf65",
+          "c026": "00bd17ff74dee9170bdbf9c28beea40999a28fb883193e4294001843c2b5b315"
+        }
+      },
+      {
+        "id": "f03-approval-tiers",
+        "title": "Tool approval tiers (read/write/exec) + object policies (allow/deny/prompt, override+reason) + unknown/malformed defaults to exec + MCP tools declare write",
+        "phase": "03",
+        "verdict": "clean-room",
+        "license": "MIT",
+        "source_repo": "oh-my-pi (MIT)",
+        "effort_saved": "days",
+        "citation_ids": [
+          "c014"
+        ],
+        "citation_sha256": {
+          "c014": "f6e4638194f716ab52c1e23fd3dcfd8cbc74fe4ec5e8263fe8449ea7d78ea59f"
+        }
+      },
+      {
+        "id": "f03-fastmcp-cli",
+        "title": "Schema-to-CLI generation: typed subcommands + --help + SKILL.md companion generated from MCP tool schemas",
+        "phase": "03",
+        "verdict": "clean-room",
+        "license": "Apache-2.0",
+        "source_repo": "jlowin/fastmcp (Apache-2.0)",
+        "effort_saved": "days",
+        "citation_ids": [
+          "c020"
+        ],
+        "citation_sha256": {
+          "c020": "dce670f72e1b281fa22214308b05f249371fe286c8bb7d394490832e835ee38e"
+        }
+      },
+      {
+        "id": "f03-fastmcp-lens",
+        "title": "Tool-lens primitives: enable/disable by keys+tags (disabled = not listed and not callable), search-tools transform, version-range filters for composed servers",
+        "phase": "03",
+        "verdict": "clean-room",
+        "license": "Apache-2.0",
+        "source_repo": "jlowin/fastmcp (Apache-2.0)",
+        "effort_saved": "days",
+        "citation_ids": [
+          "c017",
+          "c018",
+          "c019"
+        ],
+        "citation_sha256": {
+          "c017": "329fd541c0ad35de30fb80a5f7cf8be90523213aa2647678c8117bf7f562784b",
+          "c018": "27d825c8e4e3506303caabf851ef575c32132005bd7ad8cd8ac943fd67d3a641",
+          "c019": "f4d13cb0bcadbb3dd16b0ead778cfe229ac05bb15ff2ebe028d03162dbcd0640"
+        }
+      },
+      {
+        "id": "f03-mcp-admission",
+        "title": "MCP adapter charter: manifest-declared tools -> capabilities, catalog admission ceilings, schema/description bounds, tool-name grammar, typed failure tokens, single egress seam",
+        "phase": "03",
+        "verdict": "clean-room",
+        "license": "Apache-2.0 (dual MIT OR Apache-2.0)",
+        "source_repo": "nearai/ironclaw (Apache-2.0)",
+        "effort_saved": "week+",
+        "citation_ids": [
+          "c015",
+          "c016"
+        ],
+        "citation_sha256": {
+          "c015": "7ad76256c19b661dfe96a07af5d1a8b8eb82f035b7a5483c819721e3ef8af4fc",
+          "c016": "3e283a44f89a1936337e7c53dc67ee58ab647b3db7a3c0b85921e4c15adeba51"
+        }
+      },
+      {
+        "id": "f03-openchamber-toolmatch",
+        "title": "Tool-name wildcard rule grammar with hard bounds (single trailing *, length caps, 16 tools max)",
+        "phase": "03",
+        "verdict": "clean-room",
+        "license": "MIT",
+        "source_repo": "openchamber/openchamber (MIT)",
+        "effort_saved": "hours",
+        "citation_ids": [
+          "c024"
+        ],
+        "citation_sha256": {
+          "c024": "54a88c0c137eba522e05e199b0b5d75a65ee5793387a9e8c4d768fa3654b792b"
+        }
+      },
+      {
+        "id": "f03-swe-aci",
+        "title": "Composable minimal ACI tool bundles + submit/review gate as YAML config",
+        "phase": "03",
+        "verdict": "clean-room",
+        "license": "MIT",
+        "source_repo": "SWE-agent/SWE-agent (MIT)",
+        "effort_saved": "hours",
+        "citation_ids": [
+          "c022",
+          "c023"
+        ],
+        "citation_sha256": {
+          "c022": "96aeb863cbfaa768044527155f8555c9b401c6644e937b5b6b0bba5538b6eee4",
+          "c023": "91a7a214299997fa28b3988a911cef4640e99b69e87ba78fa1e03d5b0c979c51"
+        }
+      },
+      {
+        "id": "f03-vk-mcpconfig",
+        "title": "Cross-harness MCP config read/write (JSON/TOML/JSONC) with comment preservation for per-executor MCP wiring",
+        "phase": "03",
+        "verdict": "clean-room",
+        "license": "Apache-2.0",
+        "source_repo": "BloopAI/vibe-kanban (Apache-2.0)",
+        "effort_saved": "days",
+        "citation_ids": [
+          "c021"
+        ],
+        "citation_sha256": {
+          "c021": "4d6e1db7f9f9703135cb88d9db52eaae3376f542d71f837fe5bb083db756ae73"
+        }
+      },
+      {
+        "id": "f04-herdr-api",
+        "title": "Schema-first daemon API with event hub, subscriptions, and wait-for-output semantics",
+        "phase": "04",
+        "verdict": "clean-room",
+        "license": "Apache-2.0",
+        "source_repo": "herdrdev/herdr (Apache-2.0)",
+        "effort_saved": "days",
+        "citation_ids": [
+          "c032",
+          "c033"
+        ],
+        "citation_sha256": {
+          "c032": "9110fa66622b3ccdb98c206204db3509364092135dab0ff903c96b8f8acf93c7",
+          "c033": "ccb0c00cde06e694875a2759e22af40efd55ce2fadaae2d4bcf30f4afea8eab6"
+        }
+      },
+      {
+        "id": "f04-sandbox-daemon",
+        "title": "Daemon ensure-running with PID/version files and restart-on-version-mismatch",
+        "phase": "04",
+        "verdict": "clean-room",
+        "license": "Apache-2.0",
+        "source_repo": "rivet-dev/sandbox-agent (Apache-2.0)",
+        "effort_saved": "hours",
+        "citation_ids": [
+          "c034"
+        ],
+        "citation_sha256": {
+          "c034": "b5abab3b9faa2a28fd22fbc8d8347d0800eed26f60f470f5fbca9ff82f0e6bdb"
+        }
+      },
+      {
+        "id": "f04-ts-rs",
+        "title": "Rust->TypeScript type export (ts-rs) for cockpit API contracts",
+        "phase": "04",
+        "verdict": "depend",
+        "license": "Apache-2.0",
+        "source_repo": "BloopAI/vibe-kanban (Apache-2.0)",
+        "effort_saved": "hours",
+        "citation_ids": [
+          "c030",
+          "c031"
+        ],
+        "citation_sha256": {
+          "c030": "518ced2460cbcd034a6f3966d00f6fd1cf336b36679623ec38215a5970de531f",
+          "c031": "4dde733a1ee1d4895be7bd45de440268a6674898361e7b6d8b97691690e4cefb"
+        }
+      },
+      {
+        "id": "f04-vk-stream",
+        "title": "axum projection serving: SSE combined history+live stream, WS snapshot+json-patch deltas with Ready frame",
+        "phase": "04",
+        "verdict": "depend+clean-room",
+        "license": "Apache-2.0",
+        "source_repo": "BloopAI/vibe-kanban (Apache-2.0)",
+        "effort_saved": "days",
+        "citation_ids": [
+          "c027",
+          "c028",
+          "c029"
+        ],
+        "citation_sha256": {
+          "c027": "53c0d41258700e6aead237479b7e25aa6ab33bbf174a0efeba579031abf12580",
+          "c028": "d43e64bf464a0fe71c1a37172d7685738d06954cc5ac1493ed5a61c78afcfaf8",
+          "c029": "b4f61a7a63053b246e3029a6672499f8acd350d525057e0e3455f0ef17ee4a95"
+        }
+      },
+      {
+        "id": "f05-agentdeck-terminal",
+        "title": "Embedded VT terminal + web projection of live sessions (Go/charmbracelet x/vt)",
+        "phase": "05",
+        "verdict": "clean-room",
+        "license": "MIT",
+        "source_repo": "asheshgoplani/agent-deck (MIT)",
+        "effort_saved": "days",
+        "citation_ids": [
+          "c047",
+          "c048"
+        ],
+        "citation_sha256": {
+          "c047": "76bd357e57468cddc4c960376941f0aa9e9f7220c56158837b98159b5c0dc453",
+          "c048": "7f9ddf5be68e4372f482a753557a60f2c11c1ceadd49cf7dbad2b03d00ea9b04"
+        }
+      },
+      {
+        "id": "f05-herdr-detect",
+        "title": "Versioned per-agent detection manifests (bundled/remote/override) with explain output and visible working/blocked/idle flags",
+        "phase": "05",
+        "verdict": "clean-room",
+        "license": "Apache-2.0 (vendored libghostty-vt MIT)",
+        "source_repo": "herdrdev/herdr (Apache-2.0)",
+        "effort_saved": "days",
+        "citation_ids": [
+          "c039",
+          "c040",
+          "c041",
+          "c042"
+        ],
+        "citation_sha256": {
+          "c039": "a1bfa4441fbc8025d9de65c9fd8b4d21ef8426401809a54241f25eb8bdf80ccb",
+          "c040": "54e89030f12528af7b40012d9a8b7bb85a1bbc8272e369343599e004c40053e4",
+          "c041": "038d0aa23fee3f9b39cb3c9ca117d0f95b0b3a5873cf0f38284ccbac279c9664",
+          "c042": "c74713ae3faf1a1459cdea697bde3f4b7adfff224063c54440a15d123e36ffa4"
+        }
+      },
+      {
+        "id": "f05-oh-acp-authprobe",
+        "title": "Per-harness ACP auth-status probes for onboarding/Providers view (loggedIn JSON, stderr text, credential-file presence) with unknown fallback",
+        "phase": "05",
+        "verdict": "clean-room",
+        "license": "MIT",
+        "source_repo": "OpenHands/OpenHands Agent Canvas (MIT)",
+        "effort_saved": "hours",
+        "citation_ids": [
+          "c046"
+        ],
+        "citation_sha256": {
+          "c046": "26b3f74dcf058c4cf31a4b584d2302e212ad2e91bb151ccb7e35ac3cf874c453"
+        }
+      },
+      {
+        "id": "f05-openchamber-multirun",
+        "title": "Multi-run compare (up to 5 models, per-run worktrees) + guided changes walkthrough",
+        "phase": "05",
+        "verdict": "clean-room",
+        "license": "MIT",
+        "source_repo": "openchamber/openchamber (MIT)",
+        "effort_saved": "days",
+        "citation_ids": [
+          "c049"
+        ],
+        "citation_sha256": {
+          "c049": "e048681a17c0fd8d916c11ff310ff8801d21c626b693cc12f8420e118a4ee35c"
+        }
+      },
+      {
+        "id": "f05-openfang-providers",
+        "title": "Providers view plumbing: health-probe cache with TTL + budgets endpoint on axum",
+        "phase": "05",
+        "verdict": "clean-room",
+        "license": "MIT OR Apache-2.0",
+        "source_repo": "RightNow-AI/openfang (MIT OR Apache-2.0)",
+        "effort_saved": "hours",
+        "citation_ids": [
+          "c045"
+        ],
+        "citation_sha256": {
+          "c045": "37e11a2b9eea1be1c6b26f01217ac87b3097d2484d8c9dfb09e5806bb3ce868c"
+        }
+      },
+      {
+        "id": "f05-paseo-buckets",
+        "title": "Attention-first state buckets (needs_input>failed>running>attention>done) + permission notification kinds",
+        "phase": "05",
+        "verdict": "clean-room",
+        "license": "Apache-2.0",
+        "source_repo": "getpaseo/paseo (Apache-2.0)",
+        "effort_saved": "hours",
+        "citation_ids": [
+          "c036",
+          "c037",
+          "c038"
+        ],
+        "citation_sha256": {
+          "c036": "524849c42cdd97a0e99828e097a96d36abc73851454c50535fb5cd60c638ce9d",
+          "c037": "f85b298112d428d406edb59ebd046e7499933652ddf68c474dc589b49665a1c6",
+          "c038": "724298a5c7394384768642804996c217d6ec45d6517cba18a5a0a59c9cdbef9b"
+        }
+      },
+      {
+        "id": "f05-px-events",
+        "title": "Normalized AgentEvent union + HookProvider interface with protocolVersion (refuse unknown provider versions)",
+        "phase": "05",
+        "verdict": "clean-room",
+        "license": "MIT",
+        "source_repo": "pixel-agents-hq/pixel-agents (MIT)",
+        "effort_saved": "days",
+        "citation_ids": [
+          "c035"
+        ],
+        "citation_sha256": {
+          "c035": "e18cca3ada86594fad52ed687434ffc5123aaa5c2ad3a78f3fee7fab6925bc9f"
+        }
+      },
+      {
+        "id": "f05-vk-kanban-diff",
+        "title": "Kanban board + in-app diff/review workflow (task states, execution processes, head-SHA-fenced feedback)",
+        "phase": "05",
+        "verdict": "clean-room",
+        "license": "Apache-2.0",
+        "source_repo": "BloopAI/vibe-kanban (Apache-2.0)",
+        "effort_saved": "days",
+        "citation_ids": [
+          "c043",
+          "c044"
+        ],
+        "citation_sha256": {
+          "c043": "e71748fe5cf575092267edc08b85d1fa2d8399de963151beed72fc12cb783b3c",
+          "c044": "b66ef1b465db2e67d6a2f53abd8c6f52af079878d5c9ae290bc39d36fe7184f1"
+        }
+      },
+      {
+        "id": "f06-handoff-pipeline",
+        "title": "Handoff generation pipeline (generated handoff docs from session state) as evidence for inter-role envelopes",
+        "phase": "06",
+        "verdict": "clean-room",
+        "license": "MIT",
+        "source_repo": "oh-my-pi (MIT)",
+        "effort_saved": "days",
+        "citation_ids": [
+          "c058"
+        ],
+        "citation_sha256": {
+          "c058": "df9a56481d8ecba2d422937ff68484b247aefe01d7de69ee0a63e96ed470b6ae"
+        }
+      },
+      {
+        "id": "f06-meta-bus",
+        "title": "Tagged message bus schema for multi-pack teams: cause_by/sent_from/send_to + MessageQueue",
+        "phase": "06",
+        "verdict": "clean-room",
+        "license": "MIT",
+        "source_repo": "FoundationAgents/MetaGPT (MIT)",
+        "effort_saved": "hours",
+        "citation_ids": [
+          "c057"
+        ],
+        "citation_sha256": {
+          "c057": "f21ec5023b0bee58ff658af8db840cb5fd84e2bb5d1822035e9c134d3892d9f2"
+        }
+      },
+      {
+        "id": "f06-omp-agentdef",
+        "title": "omp AgentDefinition contract + frontmatter serializer + discovery precedence/validation",
+        "phase": "06",
+        "verdict": "clean-room (format compatibility required)",
+        "license": "MIT",
+        "source_repo": "oh-my-pi (MIT)",
+        "effort_saved": "days",
+        "citation_ids": [
+          "c050",
+          "c051",
+          "c052",
+          "c053"
+        ],
+        "citation_sha256": {
+          "c050": "bab92622d06ffd0d1efcf5787c6b2b80ac850b7adbd5373ecacdbc6993a57048",
+          "c051": "edcf4603deee05b2a7631c997005c7ea854679e11e5f5130d3772ff67065d012",
+          "c052": "524de1af7e9c58ac34991a998cf6f3d60b823493cd503bbcc74b1aadd8035353",
+          "c053": "b2481452d0b25e3e6e6e626ad8953711c9ddd8dde9407a1a547ce05dad9ec25d"
+        }
+      },
+      {
+        "id": "f06-omp-spawns",
+        "title": "spawns policy resolution: disabled/explicit-list/unrestricted with default agent and typed rejection text",
+        "phase": "06",
+        "verdict": "clean-room",
+        "license": "MIT",
+        "source_repo": "oh-my-pi (MIT)",
+        "effort_saved": "hours",
+        "citation_ids": [
+          "c054"
+        ],
+        "citation_sha256": {
+          "c054": "8f1a9340aa71192090e0b45c2e37b3d4b69f3415922081798b5b318c4b18405c"
+        }
+      },
+      {
+        "id": "f06-opencode-agents",
+        "title": ".opencode agent markdown format (mode/description/color frontmatter + prompt body) and workspace opencode.json",
+        "phase": "06",
+        "verdict": "clean-room (format compatibility required)",
+        "license": "MIT",
+        "source_repo": "openchamber/openchamber (MIT)",
+        "effort_saved": "hours",
+        "citation_ids": [
+          "c055",
+          "c056"
+        ],
+        "citation_sha256": {
+          "c055": "5262b2b02fe0e7f2c01e74dad92fc5a17e57c9a074da0c53257bbfc340bc2d0c",
+          "c056": "abf7873bc648e02e9e45883580c60b627442e04b9a1b19cc757218cd0a4264b4"
+        }
+      },
+      {
+        "id": "f06-orca-versioned-skills",
+        "title": "Version-matched skills served by the binary (stub SKILL.md points to `orca skills get`) + versioned references",
+        "phase": "06",
+        "verdict": "clean-room",
+        "license": "MIT",
+        "source_repo": "stablyai/orca (MIT)",
+        "effort_saved": "hours",
+        "citation_ids": [
+          "c059",
+          "c060"
+        ],
+        "citation_sha256": {
+          "c059": "cd1b364bf35781bad06bf75ab1766afa8d6cec69cb2060529691d89871a2098a",
+          "c060": "51bc9c91c586be3943ba3aa4d44bcd3a2eb412b5c663d54b33686007285ee949"
+        }
+      }
+    ],
+    "brainstorm": [
+      {
+        "id": "V1",
+        "name": "Replay Flight Recorder",
+        "phases": "02, 06",
+        "saving": "3-6 days + zero-spend inner loop",
+        "kill": "5 trace cases can't run offline/deterministically in 20 runs, or need a live model"
+      },
+      {
+        "id": "V2",
+        "name": "Gate Mutation Calibration",
+        "phases": "02 (all)",
+        "saving": "1-2 weeks of false-green rework",
+        "kill": "<11 of 12 seeded mutants detected with typed reasons, or any needs human eyeball"
+      },
+      {
+        "id": "V3",
+        "name": "Tool Misbehavior Fixture Farm",
+        "phases": "03",
+        "saving": "3-5 days",
+        "kill": "Any malicious fixture completes without typed denial, or test needs network/daemon"
+      },
+      {
+        "id": "V4",
+        "name": "Substrate Twin + Differential Matrix",
+        "phases": "02/04/05/06",
+        "saving": "1-2 weeks",
+        "kill": "<70% normalized event alignment, or twin can't reproduce one scripted error/approval turn"
+      },
+      {
+        "id": "V5",
+        "name": "Spawn-Policy Decision Matrix",
+        "phases": "02, 06",
+        "saving": "3-5 days",
+        "kill": "<90% of matrix cells generate unambiguously, or any false denial on a declared allow"
+      },
+      {
+        "id": "V6",
+        "name": "Discovery-Precedence Round-Trip Oracle",
+        "phases": "06",
+        "saving": "3-7 days",
+        "kill": "Oracle disagrees with upstream rules on >2/10 hand-checked cases, or rejects >20% valid emissions"
+      },
+      {
+        "id": "V7",
+        "name": "Projection Catalog Codegen",
+        "phases": "04, 05",
+        "saving": "4-8 days",
+        "kill": "Generated first view exceeds hand-written LOC, or can't express stale/empty/error semantics"
+      },
+      {
+        "id": "V8",
+        "name": "Chronofault MS-1 Evidence Gate",
+        "phases": "04, 05",
+        "saving": "2-4 days, reused 5x",
+        "kill": ">1 flake in 10 runs, or any assertion needs mock data"
+      },
+      {
+        "id": "V9",
+        "name": "Behavioral Fidelity Bench",
+        "phases": "06",
+        "saving": "3-5 days + de-risks kill-gate",
+        "kill": "Bench can't discriminate a deliberately broken adapter (good >=90% vs broken <60%)"
+      }
+    ],
+    "deferred": [
+      {
+        "item": "Mobile approval relay (push -> one-tap) as shipped by paseo/orca/agent-deck conductor",
+        "source": "review/repos/paseo, review/repos/orca, review/repos/asheshgoplani--agent-deck",
+        "why_deferred": "GOAL.md scope: no mobile code. In-scope variant proposed instead: cockpit Ask-policy surface + desktop notification (paseo attention payload patterns) with the same one-tap decision contract.",
+        "phase": "04/05"
+      },
+      {
+        "item": "Cluster-scale declarative task orchestration (google/ax Task/Workspace CRDs, agent-substrate sandboxes)",
+        "source": "review/repos/google--ax",
+        "why_deferred": "Cloud/cluster hosting is out of scope; STC is a homelab solo builder harness. Revisit only if a remote-lane requirement lands.",
+        "phase": "02-06"
+      },
+      {
+        "item": "Marketplace-style capability packs (OpenFang Hands, herdr plugins marketplace, fastmcp server registry installs)",
+        "source": "review/repos/RightNow-AI--openfang/crates/openfang-hands, review/repos/herdrdev--herdr, /tmp/opencode/harvest-clones/fastmcp",
+        "why_deferred": "No marketplace in scope. Internal analog: signed RolePack catalog with lockfile hashes.",
+        "phase": "06"
+      },
+      {
+        "item": "Multi-tenant/cloud runtime profiles (ironclaw Enterprise*/Hosted multi-tenant branches, OpenHands cloud backends)",
+        "source": "review/repos/nearai--ironclaw, review/repos/OpenHands--OpenHands",
+        "why_deferred": "Out of scope; only the monotonic/fail-closed local policy mechanics are taken.",
+        "phase": "02"
+      },
+      {
+        "item": "Voice control (paseo voice mode)",
+        "source": "review/repos/paseo",
+        "why_deferred": "GOAL.md scope: no voice code.",
+        "phase": "05"
+      },
+      {
+        "item": "TUI multiplexer lane (herdr/agent-deck/claude-squad style) as primary surface",
+        "source": "review/repos/herdrdev--herdr, review/repos/asheshgoplani--agent-deck, review/repos/smtg-ai--claude-squad",
+        "why_deferred": "Roadmap carry-over dropped tui in favor of browser-first cockpit; terminal visibility only if MS-2 needs raw PTY view (see f05-agentdeck-terminal).",
+        "phase": "05"
+      }
+    ],
+    "skipped": [
+      {
+        "repo": "smtg-ai/claude-squad",
+        "license": "AGPL-3.0",
+        "reason": "Copyleft floor: clean-room patterns only, and its worktree/tmux patterns are already covered by Apache/MIT sources. No code or UI assets."
+      },
+      {
+        "repo": "manaflow-ai/cmux",
+        "license": "GPL-3.0",
+        "reason": "Copyleft + macOS/Swift-only terminal; nothing Rust-portable was unique. Clean-room only."
+      },
+      {
+        "repo": "multica-ai/multica",
+        "license": "NOASSERTION (Apache-2.0 + additional conditions)",
+        "reason": "Non-floor custom license (redistribution conditions). Treat as clean-room reference for board-style agent presence only."
+      },
+      {
+        "repo": "humanlayer/humanlayer",
+        "license": "Apache-2.0 (upstream deprecated)",
+        "reason": "README states repo is deprecated ('pretty much all deprecated'); approval-store patterns superseded by vibe-kanban + ironclaw in this dossier."
+      },
+      {
+        "repo": "zeroclaw-labs/zeroclaw",
+        "license": "MIT OR Apache-2.0",
+        "reason": "Rust but channel/bot-platform oriented (Discord/Lark/Matrix); no unique phase 02-06 mechanism found beyond ironclaw-class patterns. Low-signal for cap."
+      },
+      {
+        "repo": "openai/symphony, awslabs/cli-agent-orchestrator, langchain-ai/open-swe, coleam00/Archon, generalaction/emdash",
+        "license": "varies (MIT/Apache-2.0)",
+        "reason": "Adjacent multiplexers/worktree UIs; no mechanism beyond the already-claimed sources (vibe-kanban/herdr/paseo/agent-deck). Depth-3 expansion stopped at cap."
+      }
+    ],
+    "counts": {
+      "darkharvest_items": 35,
+      "vectors": 9,
+      "deferred": 6,
+      "skipped": 6,
+      "by_phase": {
+        "02": 9,
+        "03": 8,
+        "04": 4,
+        "05": 8,
+        "06": 6
+      }
+    }
+  },
+  "acceptance": [
+    "[done] Roster presented with per-item hashed evidence (FILE_HASH_ONLY floor; manager recomputed all)",
+    "[PENDING] Explicit user approval of adoption scope (this gate)",
+    "[after] Approved items mapped to phase annexes citing phase hashes",
+    "[after] Out-of-scope remains DEFERRED (no silent adoption)",
+    "[after] Depend items carry lockfile-impact notes per GOAL.md 6"
+  ],
+  "brief": "Gate-1 close for harvest-review-01. On explicit user approval: write per-phase adoption annexes (02-contract-runtime first) citing darkharvest dossier + citation hashes; spawn programmer per phase in build order; qa-a/qa-b per phase; user sign-off closes each phase. Brainstorm vectors run as kill-gated spikes inline with their phases.",
+  "verdict": "awaiting-user-roster-approval",
+  "hashes": {
+    "frontier_settled_snapshot": "6c2cbb6dce11bb3f5ef4af311b16f81f03e4b89afe240988cfb7cf3e18254d43",
+    "darkharvest_dossier": "17f5ceaaa0a46b78060d402abc2a3087a7d08cf3460604ca6969655682e076e6",
+    "darkharvest_report": "7eace08f3030385171ba7273a804ed01d206b2d29f6dc0713ad74efa11b40f19",
+    "brainstorm_report": "9ed6ddfab988dfe7d69b0a2eaec7fbb1f854060b6bd48004b963c73f88691773",
+    "crates_acp_http_adapter_proof": "cb859f8eac29ee4188d7d0542dbbcea79d6e4f41eb45ebe052af5add72780bcd",
+    "crates_ts_rs_proof": "1ab2761898dd373c9f787e688e095bdbe74cde72a228ff6b75f72637b60633ad"
+  }
+}

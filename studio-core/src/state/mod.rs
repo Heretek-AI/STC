@@ -122,6 +122,60 @@ CREATE TRIGGER IF NOT EXISTS trg_tasks_upd AFTER UPDATE OF status ON tasks BEGIN
 END;
 ";
 
+/// Phase-02 contract-runtime tables (additive; schema_version stays 2).
+/// All `IF NOT EXISTS`, executed on every writable open alongside
+/// `SCHEMA_SQL`. Pre-existing DBs gain them on next open; no migration step,
+/// no version bump — these tables are new authority records, not a change to
+/// the phase-01 tables. Backs: frozen candidates, approval requests, scoped
+/// capability leases, burned ack tokens. Delivery receipts reuse `receipts`.
+const CONTRACT_SCHEMA_SQL: &str = "
+CREATE TABLE IF NOT EXISTS frozen_candidates(
+    freeze_hash   TEXT PRIMARY KEY,
+    lineage_hash  TEXT NOT NULL,
+    revision      INTEGER NOT NULL,
+    target_ref    TEXT NOT NULL,
+    targets_json  TEXT NOT NULL,
+    contents_json TEXT NOT NULL,
+    tier          TEXT NOT NULL,
+    created_ms    INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS contract_approvals(
+    id         TEXT PRIMARY KEY,
+    task_id    TEXT NOT NULL,
+    tool       TEXT NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'pending',
+    reason     TEXT,
+    created_ms INTEGER NOT NULL,
+    decided_ms INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_contract_approvals_task ON contract_approvals(task_id);
+CREATE TABLE IF NOT EXISTS capability_leases(
+    id          TEXT PRIMARY KEY,
+    approval_id TEXT NOT NULL,
+    scope       TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    issued_ms   INTEGER NOT NULL,
+    consumed    INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_capability_leases_approval ON capability_leases(approval_id);
+CREATE TABLE IF NOT EXISTS ack_tokens(
+    token       TEXT PRIMARY KEY,
+    freeze_hash TEXT NOT NULL,
+    task_id     TEXT NOT NULL DEFAULT '',
+    issued_ms   INTEGER NOT NULL,
+    burned      INTEGER NOT NULL DEFAULT 0
+);
+-- QA-R1: correction attempts are runtime state, not caller memory. A blocked
+-- gate run consumes the single per-freeze attempt HERE, so a fresh (or
+-- absent) CorrectionBudget object cannot buy more corrections for the same
+-- frozen candidate. New hashes legitimately start at zero (re-freezing a new
+-- candidate is the designed escape hatch, with its own receipt trail).
+CREATE TABLE IF NOT EXISTS correction_attempts(
+    freeze_hash TEXT PRIMARY KEY,
+    attempts    INTEGER NOT NULL DEFAULT 0
+);
+";
+
 #[derive(Debug, Error)]
 pub enum StateError {
     #[error("sqlite: {0}")]
@@ -410,6 +464,22 @@ impl StateStore {
     fn init_schema(&self) -> Result<(), StateError> {
         let conn = self.lock()?;
         conn.execute_batch(SCHEMA_SQL)?;
+        // Phase 02 (contract runtime): additive authority tables. `IF NOT
+        // EXISTS`, so phase-01 DBs upgrade silently with schema_version pinned.
+        conn.execute_batch(CONTRACT_SCHEMA_SQL)?;
+        // QA-R4: task binding on ack tokens. DBs created before the column
+        // existed gain it here (`ADD COLUMN` has no `IF NOT EXISTS`, so the
+        // alter is pragma-gated instead of blind).
+        let has_task: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('ack_tokens') WHERE name='task_id'",
+            [],
+            |r| r.get(0),
+        )?;
+        if has_task == 0 {
+            conn.execute_batch(
+                "ALTER TABLE ack_tokens ADD COLUMN task_id TEXT NOT NULL DEFAULT ''",
+            )?;
+        }
         Ok(())
     }
 
@@ -671,7 +741,10 @@ impl StateStore {
 
     /// Run `f` inside exactly one `BEGIN IMMEDIATE` transaction on the single
     /// writer connection. Any error rolls the transaction back and propagates.
-    fn with_write<T>(
+    /// Phase-02 contract modules (`verify`, `approvals`, `landing`) persist
+    /// their authority records through this single-writer transaction helper.
+    /// Same `BEGIN IMMEDIATE` discipline as the engine paths.
+    pub(crate) fn with_write<T>(
         &self,
         f: impl FnOnce(&Connection) -> Result<T, StateError>,
     ) -> Result<T, StateError> {
@@ -687,6 +760,15 @@ impl StateStore {
                 Err(e)
             }
         }
+    }
+
+    /// Phase-02 read helper for the contract modules (no DDL, no writes).
+    pub(crate) fn with_read<T>(
+        &self,
+        f: impl FnOnce(&Connection) -> Result<T, StateError>,
+    ) -> Result<T, StateError> {
+        let conn = self.lock()?;
+        f(&conn)
     }
 
     fn now_ms(&self) -> i64 {

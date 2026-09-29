@@ -12,8 +12,19 @@ serde_json = "1"
 sha2 = "0.10"
 hex = "0.4"
 libc = "0.2"
+# v1 verify/dod.rs used tree-sitter in main code; keep the real Rust parse in
+# the DoD syntax gate (moved from dev-deps — lockfile-neutral, same versions).
+tree-sitter = "0.25"
+tree-sitter-rust = "0.24"
+# P02 c011 (depend, Apache-2.0): minimal ACP HTTP-to-stdio adapter, rivet-dev/sandbox-agent.
+# Pinned EXACT (=0.4.2): 0.x churn (latest already 0.5.0-rc.3 at phase time), so no
+# caret/semver-range uptake. Wrapped behind the `AcpTransport` trait in
+# `src/acp.rs` — the crate's `run_server` (socket bind) is never called in
+# tests; the fake transport covers the permission-callback contract.
+# Lockfile impact: pulls axum + tower + hyper + tokio-util + tracing-sub (+
+# transitive) into Cargo.lock; no version conflicts with the existing tree
+# (tokio 1.x shared). Re-evaluate the pin if a 1.x stable line appears.
+acp-http-adapter = "=0.4.2"
 
 [dev-dependencies]
 tempfile = "3"
-tree-sitter = "0.25"
-tree-sitter-rust = "0.24"
