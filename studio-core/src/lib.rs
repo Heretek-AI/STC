@@ -17,6 +17,7 @@
 pub mod acp;
 pub mod approvals;
 pub mod lock;
+pub mod mcp;
 pub mod policy;
 pub mod projection;
 pub mod recovery;

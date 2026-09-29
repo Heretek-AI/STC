@@ -1,0 +1,6 @@
+{
+  "phase": "h1-03-gateway",
+  "goal": "Implement 03-tool-gateway with harvest annex (8 P03 adoptions + V3 fixture farm); Q9 bar; fail-closed, tool_open-on-demand, no schema preload",
+  "acceptance": [],
+  "status": "briefed"
+}
