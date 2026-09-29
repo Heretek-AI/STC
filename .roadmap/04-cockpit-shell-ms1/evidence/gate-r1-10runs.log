@@ -1,0 +1,52 @@
+run=1 fixtures: tasks=10 change_seq=10 approvals=1
+run=1 fresh: OK (label + 10 tasks + ask disabled + POST 405 + screenshot)
+run=1 stale: OK (pause→stale→recovery + screenshot)
+run=1 lost: OK (gap Lost + resync 4 rows + sticky badge + screenshot)
+run=1 PASS
+run=2 fixtures: tasks=10 change_seq=10 approvals=1
+run=2 fresh: OK (label + 10 tasks + ask disabled + POST 405 + screenshot)
+run=2 stale: OK (pause→stale→recovery + screenshot)
+run=2 lost: OK (gap Lost + resync 4 rows + sticky badge + screenshot)
+run=2 PASS
+run=3 fixtures: tasks=10 change_seq=10 approvals=1
+run=3 fresh: OK (label + 10 tasks + ask disabled + POST 405 + screenshot)
+run=3 stale: OK (pause→stale→recovery + screenshot)
+run=3 lost: OK (gap Lost + resync 4 rows + sticky badge + screenshot)
+run=3 PASS
+run=4 fixtures: tasks=10 change_seq=10 approvals=1
+run=4 fresh: OK (label + 10 tasks + ask disabled + POST 405 + screenshot)
+run=4 stale: OK (pause→stale→recovery + screenshot)
+run=4 lost: OK (gap Lost + resync 4 rows + sticky badge + screenshot)
+run=4 PASS
+run=5 fixtures: tasks=10 change_seq=10 approvals=1
+run=5 fresh: OK (label + 10 tasks + ask disabled + POST 405 + screenshot)
+run=5 stale: OK (pause→stale→recovery + screenshot)
+run=5 lost: OK (gap Lost + resync 4 rows + sticky badge + screenshot)
+run=5 PASS
+run=6 fixtures: tasks=10 change_seq=10 approvals=1
+run=6 fresh: OK (label + 10 tasks + ask disabled + POST 405 + screenshot)
+run=6 stale: OK (pause→stale→recovery + screenshot)
+run=6 lost: OK (gap Lost + resync 4 rows + sticky badge + screenshot)
+run=6 PASS
+run=7 fixtures: tasks=10 change_seq=10 approvals=1
+run=7 fresh: OK (label + 10 tasks + ask disabled + POST 405 + screenshot)
+run=7 stale: OK (pause→stale→recovery + screenshot)
+run=7 lost: OK (gap Lost + resync 4 rows + sticky badge + screenshot)
+run=7 PASS
+run=8 fixtures: tasks=10 change_seq=10 approvals=1
+run=8 fresh: OK (label + 10 tasks + ask disabled + POST 405 + screenshot)
+run=8 stale: OK (pause→stale→recovery + screenshot)
+run=8 lost: OK (gap Lost + resync 4 rows + sticky badge + screenshot)
+run=8 PASS
+run=9 fixtures: tasks=10 change_seq=10 approvals=1
+run=9 fresh: OK (label + 10 tasks + ask disabled + POST 405 + screenshot)
+run=9 stale: OK (pause→stale→recovery + screenshot)
+run=9 lost: OK (gap Lost + resync 4 rows + sticky badge + screenshot)
+run=9 PASS
+run=10 fixtures: tasks=10 change_seq=10 approvals=1
+run=10 fresh: OK (label + 10 tasks + ask disabled + POST 405 + screenshot)
+run=10 stale: OK (pause→stale→recovery + screenshot)
+run=10 lost: OK (gap Lost + resync 4 rows + sticky badge + screenshot)
+run=10 PASS
+MS1_GATE: runs=10 flakes=0 (pass bar: <=1)
+EXIT=0

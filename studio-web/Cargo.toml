@@ -1,0 +1,42 @@
+[package]
+name = "studio-web"
+version = "0.1.0"
+edition = "2021"
+
+# P04 lockfile note (f04-vk-stream depend+clean-room, Apache-2.0):
+# - axum 0.8 + tower-http 0.6: the vetted SSE/static line from the annex
+#   (annex named 0.8.4/0.5 as the starting point; implemented on the
+#   0.8.x/0.6.x line — tower-http 0.6 is the pair for axum 0.8).
+#   Consequence: Cargo.lock now carries axum 0.7.9 (via acp-http-adapter
+#   =0.4.2, P02 pin, untouched) AND axum 0.8.x (this crate) side by side.
+#   No version conflicts; tokio 1.x shared. Revisit if acp-http-adapter
+#   ships a 1.x/axum-0.8 line.
+# - ts-rs 12.0.1 (MIT, crates.io live stable at gate-1): dossier pinned
+#   11.x for vibe-kanban 11.1.0 parity, but P02 deferred vendoring the
+#   upstream file, so our export is greenfield — 12.x is correct here.
+#   NOT the xazukx fork. Generated file committed at cockpit/src/api-types.ts,
+#   CI-checked by web_contract::ts_export_matches_committed (red-on-stale-DTO).
+[[bin]]
+name = "studio-web"
+path = "src/main.rs"
+
+[[bin]]
+name = "studio-web-gen-ts"
+path = "src/bin/gen_ts.rs"
+
+[dependencies]
+studio-core = { path = "../studio-core" }
+axum = { version = "0.8", features = ["http1", "json", "query"] }
+tower-http = { version = "0.6", features = ["fs"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "signal"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+futures-core = "0.3"
+ts-rs = "12"
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net"] }

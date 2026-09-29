@@ -2,5 +2,6 @@
 members = [
     "studio-core",
     "studio-cli",
+    "studio-web",
 ]
 resolver = "2"

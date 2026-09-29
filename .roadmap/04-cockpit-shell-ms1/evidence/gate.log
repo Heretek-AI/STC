@@ -1,0 +1,6 @@
+run=1 fixtures: tasks=10 change_seq=10 approvals=1
+run=1 fresh: OK (label + 10 tasks + ask disabled + POST 405 + screenshot)
+run=1 stale: OK (pause→stale→recovery + screenshot)
+run=1 lost: OK (gap Lost + resync 4 rows + sticky badge + screenshot)
+run=1 PASS
+MS1_GATE: runs=1 flakes=0 (pass bar: <=1)

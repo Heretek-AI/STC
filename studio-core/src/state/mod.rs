@@ -222,6 +222,17 @@ pub struct WorktreeRecord {
     pub state: String,
 }
 
+/// One CDC row from `change_log` (P04 event-hub history cursor). Pure read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangeEntry {
+    pub seq: i64,
+    pub tbl: String,
+    pub row: String,
+    pub op: String,
+    pub old: Option<String>,
+    pub new: Option<String>,
+}
+
 /// Canonicalize a worktree path string to an absolute, lexical form for storage
 /// and comparison.
 fn canonical_path(p: &str) -> String {
@@ -1104,6 +1115,38 @@ impl StateStore {
         Ok(rows)
     }
 
+    /// History cursor: rows with `seq > since`, oldest-first, bounded by
+    /// `limit` (clamped 1..=1024). The caller owns gap semantics: if `since`
+    /// is older than the hub's retained floor the hub reports `Lost` — this
+    /// helper never fabricates rows.
+    pub fn changes_since(&self, since: i64, limit: usize) -> Result<Vec<ChangeEntry>, StateError> {
+        let limit = (limit.clamp(1, 1024)) as i64;
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT seq,tbl,row,op,old,new FROM change_log WHERE seq>? ORDER BY seq ASC LIMIT ?",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![since, limit], |r| {
+                Ok(ChangeEntry {
+                    seq: r.get(0)?,
+                    tbl: r.get(1)?,
+                    row: r.get(2)?,
+                    op: r.get(3)?,
+                    old: r.get(4)?,
+                    new: r.get(5)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Highest `change_log` seq (0 on an empty log). The hub's retained floor
+    /// and the client's cursor are both compared against this.
+    pub fn max_change_seq(&self) -> Result<i64, StateError> {
+        let conn = self.lock()?;
+        let v: Option<i64> = conn.query_row("SELECT MAX(seq) FROM change_log", [], |r| r.get(0))?;
+        Ok(v.unwrap_or(0))
+    }
     /// Read-only projection snapshot. Pure function of the DB at call time —
     /// the UI never owns canonical state.
     pub fn snapshot(&self) -> Result<crate::projection::Snapshot, StateError> {
@@ -1196,6 +1239,26 @@ mod tests {
         let path = dir.path().join("studio.db");
         let store = StateStore::open(path.to_str().unwrap()).unwrap();
         (dir, store)
+    }
+
+    #[test]
+    fn change_cursor_pages_oldest_first_bounded() {
+        let (_dir, s) = file_store();
+        s.upsert_task("t1", "coder", "building").unwrap();
+        s.upsert_task("t1", "coder", "done").unwrap();
+        s.upsert_task("t2", "reviewer", "in-review").unwrap();
+        let max = s.max_change_seq().unwrap();
+        assert!(max >= 3);
+        let page = s.changes_since(0, 2).unwrap();
+        assert_eq!(page.len(), 2);
+        assert!(page[0].seq < page[1].seq);
+        let rest = s.changes_since(page[1].seq, 1024).unwrap();
+        assert!(rest.iter().all(|e| e.seq > page[1].seq));
+        assert_eq!(rest.len() as i64, max - page[1].seq);
+        // Empty log edge: fresh store reports floor 0, no rows.
+        let (_d2, s2) = file_store();
+        assert_eq!(s2.max_change_seq().unwrap(), 0);
+        assert!(s2.changes_since(0, 10).unwrap().is_empty());
     }
 
     #[test]

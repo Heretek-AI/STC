@@ -229,8 +229,41 @@ pub fn load_request(
         .map_err(|e| ApprovalError::State(e.to_string()))
 }
 
-/// Durable decision: CAS on `status='pending'`. Zero rows affected means the
-/// row moved under us — re-read for the typed reason (unknown vs decided).
+/// Read-only Ask queue surfacing (P04/A1 cockpit scope): newest-first page of
+/// the durable approval rows. Pure read — never decides, never mints.
+/// `decide_stored` remains the only write path (P05 decide-later wiring).
+pub fn list_requests(
+    store: &StateStore,
+    limit: usize,
+) -> Result<Vec<ApprovalRequest>, ApprovalError> {
+    let limit = limit.clamp(1, 512) as i64;
+    store
+        .with_read(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id,task_id,tool,status,reason,created_ms,decided_ms FROM contract_approvals ORDER BY created_ms DESC, id DESC LIMIT ?",
+            )?;
+            let rows = stmt
+                .query_map(rusqlite::params![limit], |r| {
+                    let status_s: String = r.get(3)?;
+                    let created: i64 = r.get(5)?;
+                    let decided: Option<i64> = r.get(6)?;
+                    Ok(ApprovalRequest {
+                        id: r.get(0)?,
+                        task_id: r.get(1)?,
+                        tool: r.get(2)?,
+                        status: ApprovalStatus::parse(&status_s),
+                        reason: r.get(4)?,
+                        created_ms: created as u64,
+                        decided_ms: decided.map(|m| m as u64),
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .map_err(|e| ApprovalError::State(e.to_string()))
+}
+
+/// Durable decision: CAS on `status='pending'`. Zero rows affected means the/// row moved under us — re-read for the typed reason (unknown vs decided).
 pub fn decide_stored(
     store: &StateStore,
     id: &str,
@@ -364,6 +397,33 @@ pub fn consume_lease(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ask_queue_lists_newest_first_read_only() {
+        let store = StateStore::open_in_memory().unwrap();
+        for id in ["apr-a", "apr-b", "apr-c"] {
+            let req = ApprovalRequest {
+                id: id.into(),
+                task_id: "t1".into(),
+                tool: "write".into(),
+                status: ApprovalStatus::Pending,
+                reason: None,
+                created_ms: now_ms(),
+                decided_ms: None,
+            };
+            save_request(&store, &req).unwrap();
+        }
+        decide_stored(&store, "apr-b", true, "ok").unwrap();
+        // Limit clamps (0 -> 1) and never decides: all rows keep status.
+        let one = list_requests(&store, 0).unwrap();
+        assert_eq!(one.len(), 1);
+        let all = list_requests(&store, 512).unwrap();
+        assert_eq!(all.len(), 3);
+        assert!(all
+            .iter()
+            .any(|r| r.id == "apr-b" && r.status == ApprovalStatus::Approved));
+        assert!(load_request(&store, "apr-a").unwrap().unwrap().status == ApprovalStatus::Pending);
+    }
 
     #[test]
     fn request_decides_once_typed() {
