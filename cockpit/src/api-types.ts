@@ -26,3 +26,45 @@ export type HubDto = { floor_seq: number, head_seq: number, retained: number, ca
 
 export type HealthDto = { version: string, db_path: string, db_ok: boolean, schema_version: number, daemon: DaemonDto, hub: HubDto, };
 
+export type BucketDto = { name: string, order: number, tasks: Array<TaskDto>, };
+
+export type NotificationDto = { id: string, task_id: string, tool: string, kind: string, label: string, };
+
+export type WarRoomDto = { source: string, db_age_ms: number, staleness: StalenessDto, change_seq: number, buckets: Array<BucketDto>, notifications: Array<NotificationDto>, };
+
+export type AgentEventDto = { seq: number, kind: string, provider: string, protocol_version: number, payload: string, ts_ms: number, refused: boolean, };
+
+export type HookProviderDto = { name: string, protocol_version: number, compatible: boolean, };
+
+export type AgentStreamDto = { source: string, db_age_ms: number, staleness: StalenessDto, change_seq: number, gap: GapKind, floor_seq: number, provider_protocol_version: number, providers: Array<HookProviderDto>, events: Array<AgentEventDto>, };
+
+export type KanbanCardDto = { id: string, kind: string, status: string, evidence: Array<string>, };
+
+export type KanbanColumnDto = { name: string, cards: Array<KanbanCardDto>, };
+
+export type FeedbackDto = { id: string, task_id: string, head_sha: string, target_ref: string, tier: string, body: string, current_head: boolean, };
+
+export type AuditDto = { source: string, db_age_ms: number, staleness: StalenessDto, change_seq: number, columns: Array<KanbanColumnDto>, feedback: Array<FeedbackDto>, };
+
+export type ManifestSource = "Bundled" | "Remote" | "Override";
+
+export type McpAgentDto = { name: string, manifest_source: ManifestSource, version: string, detected: boolean, explain: string, state: string, };
+
+export type McpRegistryDto = { source: string, db_age_ms: number, staleness: StalenessDto, change_seq: number, agents: Array<McpAgentDto>, };
+
+export type ProbeDto = { name: string, fresh: boolean, last_probe_ms: number, ttl_ms: number, detail: string, };
+
+export type BudgetDto = { session: string, total: number, cache_hits: number, };
+
+export type AuthProbeDto = { harness: string, method: string, status: string, detail: string, };
+
+export type ProvidersDto = { source: string, db_age_ms: number, staleness: StalenessDto, change_seq: number, probes: Array<ProbeDto>, budgets: Array<BudgetDto>, lifetime_total: number, auth: Array<AuthProbeDto>, };
+
+export type RunSlotDto = { slug: string, path: string, state: string, receipts: number, };
+
+export type RunsDto = { source: string, db_age_ms: number, staleness: StalenessDto, change_seq: number, runs: Array<RunSlotDto>, deferred: string, };
+
+export type DecideBody = { approved: boolean, reason: string, };
+
+export type DecideOutcomeDto = { id: string, status: string, decided_ms: number, };
+

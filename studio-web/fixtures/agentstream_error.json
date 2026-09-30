@@ -1,0 +1,4 @@
+{
+  "error": "projection_unavailable",
+  "detail": "no successful DB read yet for studio.db — is studio.db initialized (`studio init`)?"
+}

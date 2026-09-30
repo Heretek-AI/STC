@@ -30,6 +30,19 @@ body { background: var(--surface-0); color: var(--text-0); font-family: var(--mo
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
 .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
 .card h2 { margin: 0 0 8px 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; }
+/* P05 views: bucket/column/section heads share the card-head treatment. */
+.card h3 { margin: 12px 0 4px 0; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-1); }
+/* P05 Ask inputs: token surfaces, native controls (keyboard + focus ring). */
+.card .field {
+  background: var(--surface-0);
+  color: var(--text-0);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
 .count { color: var(--text-dim); font-weight: 400; }
 .row { padding: 4px 0; border-top: 1px solid var(--border); font-size: 12px; overflow-wrap: anywhere; }
 .row:first-of-type { border-top: none; }

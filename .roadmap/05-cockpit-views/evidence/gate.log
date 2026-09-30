@@ -1,0 +1,18 @@
+run=1 fixtures: tasks=5 change_seq=7 approvals=2
+run=1 war-room: OK (5 buckets ordered + 2 permission notifications)
+run=1 agent-stream: OK (1 refused rogue v99 + gap None)
+run=1 audit: OK (fence superseded+current + evidence linkage)
+run=1 mcp: OK (bundled + remote + explain)
+run=1 providers: OK (budgets 100 + TTL cache + auth)
+run=1 runs: OK (slot + deferred stated)
+run=1 decide: OK (200 ledger + 409 + 404 + 400)
+run=1 write-surface: OK (decide-POST only)
+run=1 screenshots: OK (7 views + DOM + fresh badge)
+F1PROBE: last-good notice + scoped retry observed
+run=1 F1: OK (persistent tab: last-good notice + scoped retry)
+F1PROBE: last-good notice + scoped retry observed
+run=1 F1-empty: OK (empty board: notice + scoped retry above empty copy)
+run=1 stale: OK (pause→stale→recovery + direct 503)
+run=1 lost: OK (gap Lost + no rows + screenshot)
+run=1 PASS
+P05_GATE: runs=1 flakes=0 (pass bar: 0)

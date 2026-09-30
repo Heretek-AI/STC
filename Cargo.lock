@@ -1105,6 +1105,7 @@ dependencies = [
  "clap",
  "futures-core",
  "http-body-util",
+ "rusqlite",
  "serde",
  "serde_json",
  "studio-core",

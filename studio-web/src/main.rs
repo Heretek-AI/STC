@@ -10,7 +10,7 @@
 use clap::Parser;
 use studio_web::{
     hub::Hub,
-    server::{build_router, AppState},
+    server::{build_router, AppState, ProbeCache},
     staleness::stale_after_ms,
 };
 
@@ -52,6 +52,7 @@ async fn main() {
         db_path: args.db,
         static_dir: std::path::PathBuf::from(args.static_dir),
         version: env!("CARGO_PKG_VERSION"),
+        probe_cache: ProbeCache::default(),
     };
     let app = build_router(state);
     let addr = format!("127.0.0.1:{}", args.port);

@@ -1,0 +1,6 @@
+{
+  "phase": "h1-05-views",
+  "goal": "Implement 05-cockpit-views with harvest annex (8 P05 adoptions + A1 decide wiring + V7 revisit + V8 per-view); five live views, designed states, a11y baseline",
+  "acceptance": [],
+  "status": "briefed"
+}

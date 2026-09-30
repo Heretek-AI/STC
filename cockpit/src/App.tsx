@@ -1,16 +1,43 @@
-// Cockpit shell (P04, MS-1): browser-first, NO Tauri.
-// One real view (Status) + A1 read-only Ask queue, both read projections of
-// studio.db served by studio-web. Server owns projection; browser reads only
-// (GET /api/*). Zero mock data: every row below arrived over /api.
-import { useState } from "react";
-import type { CSSProperties } from "react";
-import type { HealthDto } from "./api-types";
+// Cockpit shell (P04 MS-1 + P05 operator views): browser-first, NO Tauri.
+// Status + A1 Ask queue plus the five P05 views (War Room, Agent Stream,
+// Audit+Gatekeeper, MCP Registry, Providers) and the Runs compare slots —
+// all read projections of studio.db served by studio-web, each with its own
+// staleness badge. Server owns projection; browser reads only (GET /api/*),
+// except the ONE write: POST /api/ask/:id/decide (A1 one-tap decision).
+// Zero mock data: every row below arrived over /api.
+// Tabs are hash-routed (#/war-room …) so gates screenshot each view live.
+import { useEffect, useState } from "react";
+import type { CSSProperties, ReactNode } from "react";
+import type { HealthDto, StatusDto, AskFeedDto } from "./api-types";
 import StalenessBadge from "./components/StalenessBadge";
 import { useProjection } from "./hooks/useProjection";
+import type { ViewName } from "./hooks/useProjection";
 import StatusView from "./views/StatusView";
 import AskView from "./views/AskView";
+import WarRoomView from "./views/WarRoomView";
+import AgentStreamView from "./views/AgentStreamView";
+import AuditView from "./views/AuditView";
+import McpView from "./views/McpView";
+import ProvidersView from "./views/ProvidersView";
+import RunsView from "./views/RunsView";
 
-type Tab = "status" | "ask";
+type Tab = "status" | ViewName | "ask";
+
+const TABS: { id: Tab; label: string }[] = [
+  { id: "status", label: "Status" },
+  { id: "war-room", label: "War Room" },
+  { id: "agent-stream", label: "Stream" },
+  { id: "audit", label: "Audit" },
+  { id: "mcp", label: "MCP" },
+  { id: "providers", label: "Providers" },
+  { id: "runs", label: "Runs" },
+  { id: "ask", label: "Ask" },
+];
+
+function tabFromHash(): Tab {
+  const h = window.location.hash.replace(/^#\/?/, "");
+  return (TABS.some((t) => t.id === h) ? h : "status") as Tab;
+}
 
 function TabButton({
   label,
@@ -71,46 +98,123 @@ function PollError({ error }: { error: string | null }) {
   );
 }
 
-function ConnectedShell({
-  status,
-  ask,
-  health,
-  gap,
-  error,
-  resync,
-}: {
-  status: NonNullable<ReturnType<typeof useProjection>["status"]>;
-  ask: NonNullable<ReturnType<typeof useProjection>["ask"]>;
-  health: ReturnType<typeof useProjection>["health"];
-  gap: ReturnType<typeof useProjection>["gap"];
-  error: string | null;
-  resync: () => void;
-}) {
-  const [tab, setTab] = useState<Tab>("status");
-  const body =
-    tab === "ask" ? (
-      <AskView feed={ask} />
-    ) : (
-      <StatusView status={status} gap={gap} onResync={resync} />
-    );
+type ShellData = ReturnType<typeof useProjection> & {
+  status: StatusDto;
+  ask: AskFeedDto;
+};
+
+function StatusBody({ data }: { data: ShellData }) {
+  return (
+    <StatusView status={data.status} gap={data.gap} onResync={data.resync} />
+  );
+}
+
+function AskBody({ data }: { data: ShellData }) {
+  return <AskView feed={data.ask} onDecided={data.refreshAsk} />;
+}
+
+function WarRoomBody({ data }: { data: ShellData }) {
+  return (
+    <WarRoomView
+      feed={data.warRoom}
+      error={data.viewErrors["war-room"]}
+      onRetry={data.retryView}
+    />
+  );
+}
+
+function StreamBody({ data }: { data: ShellData }) {
+  return (
+    <AgentStreamView
+      feed={data.agentStream}
+      error={data.viewErrors["agent-stream"]}
+      gap={data.gap}
+      onResync={data.resync}
+      onRetry={data.retryView}
+    />
+  );
+}
+
+function AuditBody({ data }: { data: ShellData }) {
+  return (
+    <AuditView
+      feed={data.audit}
+      error={data.viewErrors.audit}
+      onRetry={data.retryView}
+    />
+  );
+}
+
+function McpBody({ data }: { data: ShellData }) {
+  return (
+    <McpView feed={data.mcp} error={data.viewErrors.mcp} onRetry={data.retryView} />
+  );
+}
+
+function ProvidersBody({ data }: { data: ShellData }) {
+  return (
+    <ProvidersView
+      feed={data.providers}
+      error={data.viewErrors.providers}
+      onRetry={data.retryView}
+    />
+  );
+}
+
+function RunsBody({ data }: { data: ShellData }) {
+  return (
+    <RunsView
+      feed={data.runs}
+      error={data.viewErrors.runs}
+      onRetry={data.retryView}
+    />
+  );
+}
+
+// Tab rendering as data (complexity gate): one single-branch body per tab,
+// selected by lookup — no ternary chain.
+const TAB_BODY: Record<Tab, (data: ShellData) => ReactNode> = {
+  status: (d) => <StatusBody data={d} />,
+  ask: (d) => <AskBody data={d} />,
+  "war-room": (d) => <WarRoomBody data={d} />,
+  "agent-stream": (d) => <StreamBody data={d} />,
+  audit: (d) => <AuditBody data={d} />,
+  mcp: (d) => <McpBody data={d} />,
+  providers: (d) => <ProvidersBody data={d} />,
+  runs: (d) => <RunsBody data={d} />,
+};
+
+function ConnectedShell(data: ShellData) {
+  const [tab, setTab] = useState<Tab>(tabFromHash);
+  useEffect(() => {
+    const onHash = () => setTab(tabFromHash());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+  const select = (t: Tab) => {
+    window.location.hash = `#/${t}`;
+    setTab(t);
+  };
   return (
     <div className="cockpit">
       <header>
-        <h1>STUDIO</h1> <StalenessBadge value={status.staleness} />
-        <nav style={{ display: "flex", gap: 8, margin: "8px 0" }}>
-          <TabButton label="Status" active={tab === "status"} onSelect={() => setTab("status")} />
-          <TabButton label="Ask" active={tab === "ask"} onSelect={() => setTab("ask")} />
+        <h1>STUDIO</h1> <StalenessBadge value={data.status.staleness} />
+        <nav style={{ display: "flex", gap: 8, margin: "8px 0", flexWrap: "wrap" }} aria-label="Operator views">
+          {TABS.map((t) => (
+            <TabButton key={t.id} label={t.label} active={tab === t.id} onSelect={() => select(t.id)} />
+          ))}
         </nav>
-        <DaemonBanner health={health} />
-        <PollError error={error} />
+        <DaemonBanner health={data.health} />
+        <PollError error={data.error} />
       </header>
-      {body}
+      {TAB_BODY[tab](data)}
     </div>
   );
 }
 
 export default function App() {
-  const { status, ask, health, gap, error, resync } = useProjection();
+  const proj = useProjection();
+  const { status, ask, error } = proj;
 
   if (!status || !ask) {
     return (
@@ -123,14 +227,5 @@ export default function App() {
     );
   }
 
-  return (
-    <ConnectedShell
-      status={status}
-      ask={ask}
-      health={health}
-      gap={gap}
-      error={error}
-      resync={resync}
-    />
-  );
+  return <ConnectedShell {...proj} status={status} ask={ask} />;
 }

@@ -120,6 +120,11 @@ END;
 CREATE TRIGGER IF NOT EXISTS trg_tasks_upd AFTER UPDATE OF status ON tasks BEGIN
     INSERT INTO change_log(tbl,row,op,old,new) VALUES('tasks',NEW.id,'update',OLD.status,NEW.status);
 END;
+-- P05: agent-origin rows are stream citizens too — an `events` insert fans
+-- out to the CDC ring so Agent Stream sees it (row = the event seq).
+CREATE TRIGGER IF NOT EXISTS trg_events_log AFTER INSERT ON events BEGIN
+    INSERT INTO change_log(tbl,row,op,new) VALUES('events',CAST(NEW.seq AS TEXT),'insert',NEW.payload);
+END;
 ";
 
 /// Phase-02 contract-runtime tables (additive; schema_version stays 2).
@@ -220,6 +225,27 @@ pub struct WorktreeRecord {
     pub repo: String,
     pub slug: String,
     pub state: String,
+}
+
+/// One frozen candidate row (P05 audit head-SHA fence). Pure read over the
+/// P02 `frozen_candidates` table — no freeze semantics here, just the fence
+/// material the cockpit renders.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FrozenCandidateRow {
+    pub freeze_hash: String,
+    pub target_ref: String,
+    pub tier: String,
+    pub revision: i64,
+}
+
+/// One token-ledger session rollup (P05 providers budgets). Billed spend and
+/// cache hits are reported side by side — cache hits are tracked separately,
+/// never netted out of the billed total.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LedgerSessionRow {
+    pub session: String,
+    pub total: i64,
+    pub cache_hits: i64,
 }
 
 /// One CDC row from `change_log` (P04 event-hub history cursor). Pure read.
@@ -998,6 +1024,46 @@ impl StateStore {
         Ok(rows)
     }
 
+    /// Frozen candidate fence rows (P05 audit view). Ordered by rowid so the
+    /// LAST row per `target_ref` is the current head fence.
+    pub fn frozen_candidate_rows(&self) -> Result<Vec<FrozenCandidateRow>, StateError> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT freeze_hash, target_ref, tier, revision FROM frozen_candidates ORDER BY rowid",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(FrozenCandidateRow {
+                    freeze_hash: r.get(0)?,
+                    target_ref: r.get(1)?,
+                    tier: r.get(2)?,
+                    revision: r.get(3)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Token-ledger rollup per session (P05 providers budgets). `total` sums
+    /// billed rows (`cache_hit=0`); `cache_hits` counts cache-hit rows —
+    /// reported separately, never netted.
+    pub fn token_ledger_by_session(&self) -> Result<Vec<LedgerSessionRow>, StateError> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT session, COALESCE(SUM(CASE WHEN cache_hit=0 THEN amount ELSE 0 END),0), SUM(cache_hit) FROM token_ledger GROUP BY session ORDER BY 2 DESC",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(LedgerSessionRow {
+                    session: r.get(0)?,
+                    total: r.get(1)?,
+                    cache_hits: r.get::<_, Option<i64>>(2)?.unwrap_or(0),
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     /// Force a WAL checkpoint, retrying PASSIVE → RESTART → TRUNCATE with
     /// backoff. Never discards the `(busy, log, checkpointed)` tuple: the
     /// returned [`CheckpointOutcome`] tells the caller whether truncation
@@ -1282,6 +1348,48 @@ mod tests {
         assert_eq!(s.lifetime_spend().unwrap(), 100);
         s.record_tokens("a", 25, false).unwrap();
         assert_eq!(s.lifetime_spend().unwrap(), 125);
+    }
+
+    #[test]
+    fn ledger_by_session_reports_billed_and_hits_separately() {
+        let (_dir, s) = file_store();
+        s.record_tokens("a", 100, false).unwrap();
+        s.record_tokens("a", 50, true).unwrap();
+        s.record_tokens("a", 30, true).unwrap();
+        s.record_tokens("b", 7, false).unwrap();
+        let rows = s.token_ledger_by_session().unwrap();
+        assert_eq!(rows.len(), 2);
+        // Ordered by billed total desc: a(100) before b(7).
+        assert_eq!(rows[0].session, "a");
+        assert_eq!(rows[0].total, 100);
+        assert_eq!(rows[0].cache_hits, 2);
+        assert_eq!(rows[1].session, "b");
+        assert_eq!(rows[1].total, 7);
+        assert_eq!(rows[1].cache_hits, 0);
+    }
+
+    #[test]
+    fn frozen_candidate_rows_read_in_insert_order() {
+        let (_dir, s) = file_store();
+        assert!(s.frozen_candidate_rows().unwrap().is_empty());
+        s.with_write(|conn| {
+            for (h, target, tier, rev) in [
+                ("h1", "refs/heads/a", "full", 1),
+                ("h2", "refs/heads/a", "quick", 2),
+            ] {
+                conn.execute(
+                    "INSERT INTO frozen_candidates(freeze_hash,lineage_hash,revision,target_ref,targets_json,contents_json,tier,created_ms) VALUES(?,?,?,?,?,?,?,?)",
+                    rusqlite::params![h, "lin", rev, target, "[]", "{}", tier, 0],
+                )?;
+            }
+            Ok(())
+        })
+        .unwrap();
+        let rows = s.frozen_candidate_rows().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].freeze_hash, "h1");
+        assert_eq!(rows[1].freeze_hash, "h2");
+        assert_eq!(rows[1].tier, "quick");
     }
 
     #[test]

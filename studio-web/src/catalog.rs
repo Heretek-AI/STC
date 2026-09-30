@@ -29,17 +29,76 @@ pub struct CatalogEntry {
     pub fixtures: [&'static str; 3],
 }
 
-/// The catalog. ONE entry this phase (`status`); P05 adds views here.
-pub const CATALOG: &[CatalogEntry] = &[CatalogEntry {
-    name: "status",
-    route: "/api/status",
-    dto: "StatusDto",
-    fixtures: [
-        "status_empty.json",
-        "status_loading.json",
-        "status_error.json",
-    ],
-}];
+/// The catalog. P04 shipped ONE entry (`status`); P05 adds the six operator
+/// views below. V7 revisit (measured on view #2, Agent Stream — see
+/// PHASE-RECEIPT): the envelope (badge/states/retry/DTO/fixtures) is factored
+/// once as shared code (ViewShell + this table + generic constructor), while
+/// per-view rendering (buckets vs kanban vs probes) stays hand-written:
+/// generator schema expressive enough to describe all six renderings plus its
+/// template would exceed that per-view cost. Kill HOLDS for view JSX;
+/// the shared envelope is the correct amortization (not codegen). Full
+/// counts: see PHASE-RECEIPT §V7 (hand-written view #2 measured at 159
+/// lines vs generator template + schema estimate).
+pub const CATALOG: &[CatalogEntry] = &[
+    CatalogEntry {
+        name: "status",
+        route: "/api/status",
+        dto: "StatusDto",
+        fixtures: [
+            "status_empty.json",
+            "status_loading.json",
+            "status_error.json",
+        ],
+    },
+    CatalogEntry {
+        name: "war-room",
+        route: "/api/war-room",
+        dto: "WarRoomDto",
+        fixtures: [
+            "warroom_empty.json",
+            "warroom_loading.json",
+            "warroom_error.json",
+        ],
+    },
+    CatalogEntry {
+        name: "agent-stream",
+        route: "/api/agent-stream",
+        dto: "AgentStreamDto",
+        fixtures: [
+            "agentstream_empty.json",
+            "agentstream_loading.json",
+            "agentstream_error.json",
+        ],
+    },
+    CatalogEntry {
+        name: "audit",
+        route: "/api/audit",
+        dto: "AuditDto",
+        fixtures: ["audit_empty.json", "audit_loading.json", "audit_error.json"],
+    },
+    CatalogEntry {
+        name: "mcp",
+        route: "/api/mcp",
+        dto: "McpRegistryDto",
+        fixtures: ["mcp_empty.json", "mcp_loading.json", "mcp_error.json"],
+    },
+    CatalogEntry {
+        name: "providers",
+        route: "/api/providers",
+        dto: "ProvidersDto",
+        fixtures: [
+            "providers_empty.json",
+            "providers_loading.json",
+            "providers_error.json",
+        ],
+    },
+    CatalogEntry {
+        name: "runs",
+        route: "/api/runs",
+        dto: "RunsDto",
+        fixtures: ["runs_empty.json", "runs_loading.json", "runs_error.json"],
+    },
+];
 
 /// Every catalog entry MUST ship exactly three fixtures in
 /// empty/loading/error order — enforced here, not by convention.
@@ -68,9 +127,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_has_one_entry_with_three_ordered_fixtures() {
+    fn catalog_has_seven_entries_with_three_ordered_fixtures() {
         check_catalog_shape().unwrap();
-        assert_eq!(CATALOG.len(), 1);
+        assert_eq!(CATALOG.len(), 7);
         assert_eq!(CATALOG[0].route, "/api/status");
+        assert_eq!(CATALOG[1].route, "/api/war-room");
     }
 }

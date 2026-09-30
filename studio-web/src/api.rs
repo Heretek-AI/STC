@@ -161,6 +161,268 @@ pub struct HealthDto {
     pub hub: HubDto,
 }
 
+// ---------------------------------------------------------------------------
+// P05 operator views (all read projections with staleness badges; UI never
+// owns state). Every DTO below derives `ts-rs::TS` and is exported by
+// [`export_ts`]; the red-on-stale contract test fails when a DTO changes
+// without regenerating `cockpit/src/api-types.ts`.
+// ---------------------------------------------------------------------------
+
+/// One attention bucket (f05-paseo-buckets clean-room, Apache-2.0).
+/// Display order is `order` ascending: needs_input(0) > failed(1) >
+/// running(2) > attention(3) > done(4) — deterministic cockpit ordering.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct BucketDto {
+    pub name: String,
+    #[ts(type = "number")]
+    pub order: u32,
+    pub tasks: Vec<TaskDto>,
+}
+
+/// Permission notification kind (f05-paseo-buckets): a pending approval
+/// surfaced as an attention payload (desktop notification pattern only —
+/// no mobile code, no push infra).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct NotificationDto {
+    pub id: String,
+    pub task_id: String,
+    pub tool: String,
+    pub kind: String,
+    pub label: String,
+}
+
+/// War Room payload: attention-first task buckets + permission notifications.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct WarRoomDto {
+    pub source: String,
+    #[ts(type = "number")]
+    pub db_age_ms: u64,
+    pub staleness: StalenessDto,
+    #[ts(type = "number")]
+    pub change_seq: i64,
+    pub buckets: Vec<BucketDto>,
+    pub notifications: Vec<NotificationDto>,
+}
+
+/// One normalized agent event (f05-px-events clean-room, MIT).
+/// `kind` is the normalized union (`message` | `tool_call` | `tool_result` |
+/// `status` | `unknown`); rows declaring an unsupported `protocol_version`
+/// are surfaced as `unknown` with `refused: true` — refused, never dropped
+/// silently and never executed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct AgentEventDto {
+    #[ts(type = "number")]
+    pub seq: i64,
+    pub kind: String,
+    pub provider: String,
+    #[ts(type = "number")]
+    pub protocol_version: u32,
+    pub payload: String,
+    #[ts(type = "number")]
+    pub ts_ms: Option<u64>,
+    pub refused: bool,
+}
+
+/// Hook provider interface record (f05-px-events): name + protocol version.
+/// `compatible` is false for unknown versions — the server refuses them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct HookProviderDto {
+    pub name: String,
+    #[ts(type = "number")]
+    pub protocol_version: u32,
+    pub compatible: bool,
+}
+
+/// Agent Stream payload: normalized CDC events + latest agent-origin rows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct AgentStreamDto {
+    pub source: String,
+    #[ts(type = "number")]
+    pub db_age_ms: u64,
+    pub staleness: StalenessDto,
+    #[ts(type = "number")]
+    pub change_seq: i64,
+    pub gap: GapKind,
+    #[ts(type = "number")]
+    pub floor_seq: i64,
+    #[ts(type = "number")]
+    pub provider_protocol_version: u32,
+    pub providers: Vec<HookProviderDto>,
+    pub events: Vec<AgentEventDto>,
+}
+
+/// One kanban card (f05-vk-kanban-diff clean-room, Apache-2.0): task +
+/// receipt evidence ids.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct KanbanCardDto {
+    pub id: String,
+    pub kind: String,
+    pub status: String,
+    pub evidence: Vec<String>,
+}
+
+/// One kanban column: lane name + cards in id order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct KanbanColumnDto {
+    pub name: String,
+    pub cards: Vec<KanbanCardDto>,
+}
+
+/// Head-SHA-fenced feedback (f05-vk-kanban-diff): a review note recorded
+/// against exactly one frozen head (`head_sha` = `freeze_hash`). A consumer
+/// applies it only when the task's current head still equals `head_sha`;
+/// otherwise it is shown fenced (stale review, never silently applied).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct FeedbackDto {
+    pub id: String,
+    pub task_id: String,
+    pub head_sha: String,
+    pub target_ref: String,
+    pub tier: String,
+    pub body: String,
+    pub current_head: bool,
+}
+
+/// Audit + Gatekeeper payload: kanban board + fenced feedback.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct AuditDto {
+    pub source: String,
+    #[ts(type = "number")]
+    pub db_age_ms: u64,
+    pub staleness: StalenessDto,
+    #[ts(type = "number")]
+    pub change_seq: i64,
+    pub columns: Vec<KanbanColumnDto>,
+    pub feedback: Vec<FeedbackDto>,
+}
+
+/// Where an agent detection manifest came from (f05-herdr-detect clean-room,
+/// Apache-2.0; ghostty-vt explicitly rejected as a dependency — PATTERN ONLY).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub enum ManifestSource {
+    Bundled,
+    Remote,
+    Override,
+}
+
+/// One agent detection record: manifest provenance + PATH-probe outcome +
+/// explain string + working/blocked/idle flag derived from real signals
+/// (binary presence × daemon reachability).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct McpAgentDto {
+    pub name: String,
+    pub manifest_source: ManifestSource,
+    pub version: String,
+    pub detected: bool,
+    pub explain: String,
+    pub state: String,
+}
+
+/// MCP Registry payload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct McpRegistryDto {
+    pub source: String,
+    #[ts(type = "number")]
+    pub db_age_ms: u64,
+    pub staleness: StalenessDto,
+    #[ts(type = "number")]
+    pub change_seq: i64,
+    pub agents: Vec<McpAgentDto>,
+}
+
+/// One cached health probe (f05-openfang-providers clean-room, MIT OR
+/// Apache-2.0): the last real probe result + TTL. `fresh` is false when the
+/// cached result is older than `ttl_ms` — the UI re-probes (scoped retry).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ProbeDto {
+    pub name: String,
+    pub fresh: bool,
+    #[ts(type = "number")]
+    pub last_probe_ms: u64,
+    #[ts(type = "number")]
+    pub ttl_ms: u64,
+    pub detail: String,
+}
+
+/// One budget row over the real `token_ledger` (billed spend, cache hits
+/// tracked separately — never netted).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct BudgetDto {
+    pub session: String,
+    #[ts(type = "number")]
+    pub total: i64,
+    #[ts(type = "number")]
+    pub cache_hits: i64,
+}
+
+/// Per-harness ACP auth-status probe (f05-oh-acp-authprobe clean-room, MIT):
+/// credential-file presence only (never reads secrets) with an `unknown`
+/// fallback when the harness declares no checkable path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct AuthProbeDto {
+    pub harness: String,
+    pub method: String,
+    pub status: String,
+    pub detail: String,
+}
+
+/// Providers payload: probe cache + budgets + auth probes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ProvidersDto {
+    pub source: String,
+    #[ts(type = "number")]
+    pub db_age_ms: u64,
+    pub staleness: StalenessDto,
+    #[ts(type = "number")]
+    pub change_seq: i64,
+    pub probes: Vec<ProbeDto>,
+    pub budgets: Vec<BudgetDto>,
+    #[ts(type = "number")]
+    pub lifetime_total: i64,
+    pub auth: Vec<AuthProbeDto>,
+}
+
+/// One run slot for multi-run compare (f05-openchamber-multirun clean-room,
+/// MIT): a real `worktrees` row + its receipt evidence count. Capped at 5.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct RunSlotDto {
+    pub slug: String,
+    pub path: String,
+    pub state: String,
+    #[ts(type = "number")]
+    pub receipts: usize,
+}
+
+/// Multi-run compare payload. Per-model columns + guided walkthrough are
+/// DEFERRED (see `deferred`): tasks carry no run/model linkage in schema v2.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct RunsDto {
+    pub source: String,
+    #[ts(type = "number")]
+    pub db_age_ms: u64,
+    pub staleness: StalenessDto,
+    #[ts(type = "number")]
+    pub change_seq: i64,
+    pub runs: Vec<RunSlotDto>,
+    pub deferred: String,
+}
+
+/// POST /api/ask/:id/decide body (A1 one-tap decision contract).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DecideBody {
+    pub approved: bool,
+    pub reason: String,
+}
+
+/// POST /api/ask/:id/decide outcome: the durable ledger row after CAS.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DecideOutcomeDto {
+    pub id: String,
+    pub status: String,
+    #[ts(type = "number")]
+    pub decided_ms: Option<u64>,
+}
+
 /// Render the committed TypeScript mirror. Order is fixed (field order =
 /// declaration order) so the committed file diff is stable.
 pub fn export_ts() -> String {
@@ -183,6 +445,27 @@ pub fn export_ts() -> String {
         DaemonDto::decl(&cfg),
         HubDto::decl(&cfg),
         HealthDto::decl(&cfg),
+        BucketDto::decl(&cfg),
+        NotificationDto::decl(&cfg),
+        WarRoomDto::decl(&cfg),
+        AgentEventDto::decl(&cfg),
+        HookProviderDto::decl(&cfg),
+        AgentStreamDto::decl(&cfg),
+        KanbanCardDto::decl(&cfg),
+        KanbanColumnDto::decl(&cfg),
+        FeedbackDto::decl(&cfg),
+        AuditDto::decl(&cfg),
+        ManifestSource::decl(&cfg),
+        McpAgentDto::decl(&cfg),
+        McpRegistryDto::decl(&cfg),
+        ProbeDto::decl(&cfg),
+        BudgetDto::decl(&cfg),
+        AuthProbeDto::decl(&cfg),
+        ProvidersDto::decl(&cfg),
+        RunSlotDto::decl(&cfg),
+        RunsDto::decl(&cfg),
+        DecideBody::decl(&cfg),
+        DecideOutcomeDto::decl(&cfg),
     ] {
         for line in decl.split('\n') {
             if line.is_empty() {

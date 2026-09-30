@@ -1,0 +1,12 @@
+{
+  "source": "studio.db",
+  "db_age_ms": 5,
+  "staleness": {
+    "state": "Fresh",
+    "label": "fresh · source: studio.db · updated 5ms ago · seq 0",
+    "db_age_ms": 5,
+    "change_seq": 0
+  },
+  "change_seq": 0,
+  "agents": []
+}

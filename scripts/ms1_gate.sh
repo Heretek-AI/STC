@@ -95,15 +95,15 @@ EOF
   echo "$body" | grep -q '"source":"ms1.db"' || { log "run=$idx FAIL source provenance"; cleanup; return 1; }
   # read-only: no write method survives
   [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/api/status")" = "405" ] || { log "run=$idx FAIL POST not 405"; cleanup; return 1; }
-  # ask queue: 1 row, visibly disabled
+  # ask queue: 1 row, live decision path (P05 A1: pending rows expose it)
   local ask; ask="$(curl -sf "$base/api/ask")"
-  echo "$ask" | grep -q '"decision_enabled":false' || { log "run=$idx FAIL ask not disabled"; cleanup; return 1; }
+  echo "$ask" | grep -q '"decision_enabled":true' || { log "run=$idx FAIL ask decision path not live"; cleanup; return 1; }
   google-chrome --headless=new --no-sandbox --disable-gpu --hide-scrollbars \
     --window-size=1280,800 --screenshot="$EVIDENCE_DIR/fresh.png" \
     --virtual-time-budget=3000 "$base/" >/dev/null 2>&1
   grep -q 'data-state="Fresh"' <(google-chrome --headless=new --no-sandbox --disable-gpu \
     --dump-dom --virtual-time-budget=3000 "$base/" 2>/dev/null) || { log "run=$idx FAIL fresh DOM badge"; cleanup; return 1; }
-  log "run=$idx fresh: OK (label + 10 tasks + ask disabled + POST 405 + screenshot)"
+  log "run=$idx fresh: OK (label + 10 tasks + ask live + POST 405 + screenshot)"
 
   # --- restart WITHOUT frozen clock for the time-stale + lost phases
   kill "$server_pid" 2>/dev/null || true

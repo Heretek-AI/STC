@@ -39,4 +39,8 @@ clap = { version = "4", features = ["derive"] }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+# Test-only direct DB access for fixture inserts the public API does not
+# cover (frozen-candidate fence rows). Same pinned line as studio-core
+# (0.31, bundled) — no new production dependency.
+rusqlite = { version = "0.31", features = ["bundled"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net"] }
