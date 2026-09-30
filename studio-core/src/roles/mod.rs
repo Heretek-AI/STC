@@ -25,6 +25,14 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+pub mod bus;
+pub mod catalog;
+pub mod emit;
+pub mod fidelity;
+pub mod handoff;
+pub mod oracle;
+pub mod skills;
+
 /// Typed role-contract failures. No `String` errors cross this boundary.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum RoleError {
@@ -41,6 +49,32 @@ pub enum RoleError {
         pack_name: String,
         pack_version: String,
     },
+    /// Agent frontmatter invalid: file:line + plain-English hint (V6 bar).
+    #[error("{file}:{line}: {hint}")]
+    FrontmatterInvalid {
+        file: String,
+        line: usize,
+        hint: String,
+    },
+    /// Emission I/O failure on one target.
+    #[error("emit {target} failed: {detail}")]
+    EmitIo { target: String, detail: String },
+    /// Emitted artifact does not parse back.
+    #[error("{file}:{line}: {hint}")]
+    EmitParse {
+        file: String,
+        line: usize,
+        hint: String,
+    },
+    /// Emitted tools drifted from the pack on one target.
+    #[error("emit {target} roundtrip failed: {detail}")]
+    EmitRoundtrip { target: String, detail: String },
+    /// Handoff guard refusal (streaming / minimum-content floor).
+    #[error("handoff refused: {detail}")]
+    HandoffViolation { detail: String },
+    /// Skill stub / binary version mismatch.
+    #[error("skill refused: {detail}")]
+    SkillViolation { detail: String },
 }
 
 /// Versioned agent template. Roles name model slots, never providers; workers
@@ -242,6 +276,20 @@ impl RolePack {
     /// [`SpawnPolicy::request`].
     pub fn request_spawn(&self, child_scopes: &[String]) -> Result<(), SpawnDenied> {
         self.spawns.request(child_scopes, &self.tools)
+    }
+
+    /// Deterministic omp `description`: the pack's lead sentence (text up to
+    /// the first `. ` / `.\n` / trailing `.`). STC packs author a one-line
+    /// lead by convention, so the omp-required field round-trips byte-exact
+    /// through emit→parse.
+    pub fn omp_description(&self) -> String {
+        let p = self.system_prompt.trim();
+        for sep in [". ", ".\n"] {
+            if let Some(pos) = p.find(sep) {
+                return p[..pos + 1].to_string();
+            }
+        }
+        p.trim_end_matches('.').to_string() + "."
     }
 
     /// Content-hash lock over the pack identity + skill lockfile hash.

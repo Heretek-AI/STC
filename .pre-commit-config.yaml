@@ -8,7 +8,15 @@ repos:
     rev: v5.0.0
     hooks:
       - id: trailing-whitespace
+        # Phase-06 standing waiver: guarded roadmap dossiers are
+        # byte-pinned evidence inputs (dossier.json/GOAL.md carry cited
+        # hashes); whitespace fixers must never rewrite them. Code hooks
+        # (rustfmt/clippy/gitleaks/fallow/yaml/large-files/conflicts)
+        # are unchanged and still cover .roadmap/**.
+        exclude: ^\.roadmap/
       - id: end-of-file-fixer
+        # Same standing waiver as trailing-whitespace above.
+        exclude: ^\.roadmap/
       - id: check-yaml
       - id: check-added-large-files
         args: ['--maxkb=512']

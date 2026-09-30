@@ -1,0 +1,26 @@
+run=1 fixtures: tasks=5 approvals=1 seq=5
+run=1 scope: OK (5 buckets + plan visible, zero mock)
+run=1 dag: OK (seq=5, 5 tasks in projection)
+run=1 dispatch: OK (apr-ms2 pending, decision path live)
+run=1 review: OK (approved 200, re-decide 409)
+run=1 merge: OK (ledger approved + ask row decided/disabled)
+run=1 pillars: OK (4 screenshots + status badge + ask row in DOM)
+run=1 differential: OK (live scope→dag→dispatch→review→merge matches twin transcript schema; scripted error turn covered by ms2_twin replay test)
+run=2 fixtures: tasks=5 approvals=1 seq=5
+run=2 scope: OK (5 buckets + plan visible, zero mock)
+run=2 dag: OK (seq=5, 5 tasks in projection)
+run=2 dispatch: OK (apr-ms2 pending, decision path live)
+run=2 review: OK (approved 200, re-decide 409)
+run=2 merge: OK (ledger approved + ask row decided/disabled)
+run=2 pillars: OK (4 screenshots + status badge + ask row in DOM)
+run=2 differential: OK (live scope→dag→dispatch→review→merge matches twin transcript schema; scripted error turn covered by ms2_twin replay test)
+run=3 fixtures: tasks=5 approvals=1 seq=5
+run=3 scope: OK (5 buckets + plan visible, zero mock)
+run=3 dag: OK (seq=5, 5 tasks in projection)
+run=3 dispatch: OK (apr-ms2 pending, decision path live)
+run=3 review: OK (approved 200, re-decide 409)
+run=3 merge: OK (ledger approved + ask row decided/disabled)
+run=3 pillars: OK (4 screenshots + status badge + ask row in DOM)
+run=3 differential: OK (live scope→dag→dispatch→review→merge matches twin transcript schema; scripted error turn covered by ms2_twin replay test)
+MS2_GATE: runs=3 flakes=0
+MS2_GATE: PASS
