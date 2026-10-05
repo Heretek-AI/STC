@@ -3,8 +3,10 @@
 //! This is a v2 rewrite, not a v1 port: v1 shipped a schema-migration stack
 //! (`migrate.rs`, `SCHEMA_VERSION = 3`, legacy `billed_kind` repair). The v2
 //! brief is explicit — *greenfield v2 schema, NO v1 migration* — so the schema
-//! here is created idempotently and any database that is not exactly v2 is
-//! refused (fail closed, typed reason).
+//! here is created idempotently and version mismatches are refused
+//! (fail closed, typed reason), with one documented adoption arm: a
+//! magic-present, well-formed SQLite file is healed via `IF NOT EXISTS` DDL
+//! (see [`StateStore::open`]; qa-b repro `other-schema.db` opens `Ok`).
 //!
 //! Crash-safety design (evidence hashes in `.roadmap/01-engine-skeleton/dossier.json`):
 //! - **Atomicity.** WAL, `synchronous = NORMAL`. A crash mid-transaction rolls
@@ -41,6 +43,62 @@ use thiserror::Error;
 /// v2 schema version. Bumping this requires a real migration step; the current
 /// engine refuses anything that is not exactly this version.
 pub const SCHEMA_VERSION: i64 = 2;
+
+/// V02-A/H1 hardening: SQLite file magic discriminant for M12 narrowing.
+///
+/// The first 16 bytes of every SQLite database file are the well-known
+/// header `SQLite format 3\0` (VERIFIED against a live v2 DB this phase via
+/// `head -c16 studio.db | od`). A pre-existing non-empty file without this
+/// header is deterministically NOT a v2 store, so [`StateStore::open`]
+/// refuses it with typed [`StateError::NotV2`] BEFORE touching SQLite —
+/// steady-state garbage is exactly-typed, not a two-variant union.
+///
+/// TOCTOU guard (union remains load-bearing for the race): the discriminant
+/// is an advisory pre-read prediction, while [`StateStore::open`] is the
+/// gate. A header-spoofed file (`SQLite format 3\0` + corrupt body)
+/// passes the pre-check and fails later inside SQLite as
+/// [`StateError::Sqlite`]; likewise a file swapped between the pre-check and
+/// `Connection::open` can surface either variant, and both arms stay
+/// fail-closed (typed). Callers that need a total fail-closed gate must
+/// therefore still accept `Sqlite(_) | NotV2{..}`
+/// (both typed fail-closed). The M12 corpus pins the steady-state mapping
+/// (garbage → `NotV2`, spoof → `Sqlite`) over 6 inputs × 50 runs.
+///
+/// Exactness is per-path: only [`StateStore::open`] applies this
+/// discriminant. [`StateStore::open_readonly`] runs no pre-check, so the
+/// same garbage file surfaces `Sqlite(NotADatabase)` there (disclosed split;
+/// see its docs).
+///
+/// Known limit (no file-type guard): the pre-check does `File::open` + a
+/// blocking read with no FIFO/socket/device guard, so opening a FIFO path
+/// can block. Callers must not point `open` at a FIFO (or must open it in a
+/// thread with a timeout); a future phase may add a file-type guard.
+pub const SQLITE_MAGIC: &[u8; 16] = b"SQLite format 3\0";
+
+/// Magic-byte pre-check for [`StateStore::open`]. Returns `Some(NotV2)` when
+/// `path` exists, is non-empty, and lacks the SQLite header; `None`
+/// otherwise (missing file, empty file, or header present — let SQLite
+/// decide, preserving fresh-DB creation and the spoof → `Sqlite` path).
+/// Advisory pre-read prediction only: [`StateStore::open`] gates on this
+/// (refusing early with `NotV2{found:0}`), while a concurrent swap can still
+/// land in either fail-closed arm (`NotV2` or `Sqlite`). Known limit: no
+/// file-type guard — `File::open` + read blocks on FIFOs (see `SQLITE_MAGIC`
+/// docs).
+fn garbage_discriminant(path: &Path) -> Option<StateError> {
+    let meta = std::fs::metadata(path).ok()?;
+    if meta.len() == 0 {
+        return None;
+    }
+    let mut f = std::fs::File::open(path).ok()?;
+    use std::io::Read as _;
+    let mut head = [0u8; 16];
+    // Short read (file < 16 bytes, e.g. `not a database`) cannot be a DB.
+    let n = std::io::Read::by_ref(&mut f).read(&mut head).ok()?;
+    if n < 16 || &head != SQLITE_MAGIC {
+        return Some(StateError::NotV2 { found: 0 });
+    }
+    None
+}
 
 /// Greenfield v2 schema. Created idempotently (`IF NOT EXISTS`). No migration.
 const SCHEMA_SQL: &str = "
@@ -172,7 +230,7 @@ CREATE TABLE IF NOT EXISTS ack_tokens(
 );
 -- QA-R1: correction attempts are runtime state, not caller memory. A blocked
 -- gate run consumes the single per-freeze attempt HERE, so a fresh (or
--- absent) CorrectionBudget object cannot buy more corrections for the same
+-- absent) caller-held budget object cannot buy more corrections for the same
 -- frozen candidate. New hashes legitimately start at zero (re-freezing a new
 -- candidate is the designed escape hatch, with its own receipt trail).
 CREATE TABLE IF NOT EXISTS correction_attempts(
@@ -384,12 +442,35 @@ pub struct StateStore {
 
 impl StateStore {
     /// Open (creating if absent) the v2 database at `path`, ensure WAL, and
-    /// fail closed if the existing file is not exactly v2.
+    /// fail closed on version mismatches — with one documented adoption arm.
+    ///
+    /// Three arms (disclosure-only; no enforcement change):
+    /// - (a) pre-existing non-empty file WITHOUT the SQLite magic →
+    ///   deterministic early `NotV2{found:0}` via `garbage_discriminant`
+    ///   (steady-state garbage; exactness holds for this path only).
+    /// - (b) magic-present + well-formed SQLite WITHOUT our version row (or
+    ///   with `schema_version = 2`) → `Ok` adoption: `init_schema` heals via
+    ///   `IF NOT EXISTS` DDL, then `check_version` passes. Qa-b repro
+    ///   `/tmp/opencode/qa-b-harden02/other-schema.db` (valid SQLite,
+    ///   `schema_version = 2`, extra table `foo`) opens `Ok` — this is the
+    ///   heal, not a fail-closed refusal. The earlier "not exactly v2"
+    ///   shorthand is superseded by this three-arm disclosure.
+    /// - (c) version mismatch after DDL (`schema_version = 1` → `NotV2`,
+    ///   `= 3` → `NewerSchema`) or unreadable/corrupt body (header-spoofed
+    ///   or swapped mid-open) → typed fail-closed (`NotV2` / `NewerSchema` /
+    ///   `Sqlite`). Both TOCTOU arms stay fail-closed.
     pub fn open(path: &str) -> Result<Self, StateError> {
         if let Some(parent) = Path::new(path).parent() {
             if !parent.as_os_str().is_empty() {
                 std::fs::create_dir_all(parent).map_err(|e| StateError::Io(e.to_string()))?;
             }
+        }
+        // V02-A/H1: deterministic garbage refusal before SQLite. Empty and
+        // missing files fall through (fresh-DB creation); header-spoofed or
+        // concurrently-swapped files still fail closed inside SQLite as
+        // `Sqlite` (TOCTOU guard — see `SQLITE_MAGIC` docs).
+        if let Some(refused) = garbage_discriminant(Path::new(path)) {
+            return Err(refused);
         }
         let conn = Connection::open(path)?;
         Self::configure(&conn, true)?;
@@ -424,6 +505,14 @@ impl StateStore {
 
     /// Read-only open for the CLI projection path. Never creates the DB and
     /// never runs DDL, so `studio status` works with no daemon running.
+    ///
+    /// Discriminant split (disclosed; exactness is per-path): unlike
+    /// [`StateStore::open`], this path runs NO `garbage_discriminant`
+    /// pre-check and never heals, so a non-empty garbage file surfaces
+    /// `Sqlite(NotADatabase)` here where `open` would return early
+    /// `NotV2{found:0}`. Version gating is still fail-closed via
+    /// `check_version` (`NotV2` / `NewerSchema`); only the garbage arm
+    /// differs, and only because the pre-check is `open`-only by design.
     ///
     /// RO-STATUS-01: on read-only media the WAL read path would need to write
     /// `-shm`/`-wal` sidecars and fail with `attempt to write a readonly
@@ -1964,5 +2053,114 @@ mod tests {
             s.refused_reason("/x/b").unwrap().as_deref(),
             Some("control")
         );
+    }
+
+    /// V02-A/H1 kill-gated spike: M12 magic-byte discriminant corpus.
+    ///
+    /// Kill criteria: FAILS pre-fix (garbage asserted as a two-variant union
+    /// `Sqlite(_) | NotV2{..}`); PASSES post-fix with the steady-state
+    /// mapping below. Falsifies: discriminant misclassifying empty/valid DBs,
+    /// non-determinism across 50 runs, or a spoof passing as `NotV2`.
+    ///
+    /// 6 inputs × 50 runs = 300 opens, all deterministic:
+    ///  (a) ASCII garbage `not a database` → exact `NotV2{found:0}`;
+    ///  (b) empty file → `Ok` (fresh-DB creation preserved);
+    ///  (c) truncated header `SQLite format` → exact `NotV2`;
+    ///  (d) 1 KiB deterministic non-header bytes → exact `NotV2`;
+    ///  (e) valid v2 DB → `Ok` (control);
+    ///  (f) header-spoofed corrupt (magic + 1 KiB garbage) → `Sqlite`
+    ///      (union load-bearing for the spoof/TOCTOU race — documented, not narrowed).
+    #[test]
+    fn m12_discriminant_corpus_6_inputs_x50_runs_exact_typed() {
+        use crate::state::StateError;
+        // Deterministic 1 KiB pseudo-random payload (no new deps: LCG).
+        fn pseudo_bytes(seed: u64, len: usize) -> Vec<u8> {
+            let mut x = seed;
+            (0..len)
+                .map(|_| {
+                    x = x
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407);
+                    (x >> 33) as u8
+                })
+                .collect()
+        }
+        // (a) ASCII garbage.
+        for _ in 0..50 {
+            let dir = tempfile::tempdir().unwrap();
+            let p = dir.path().join("studio.db");
+            std::fs::write(&p, b"not a database").unwrap();
+            let err = StateStore::open(p.to_str().unwrap()).unwrap_err();
+            assert!(
+                matches!(err, StateError::NotV2 { found: 0 }),
+                "garbage must be exactly NotV2{{found:0}}, got: {err:?}"
+            );
+        }
+        // (b) Empty file → fresh DB (must NOT be refused).
+        for _ in 0..50 {
+            let dir = tempfile::tempdir().unwrap();
+            let p = dir.path().join("studio.db");
+            std::fs::write(&p, b"").unwrap();
+            assert!(
+                StateStore::open(p.to_str().unwrap()).is_ok(),
+                "empty file must create a fresh DB"
+            );
+        }
+        // (c) Truncated header.
+        for _ in 0..50 {
+            let dir = tempfile::tempdir().unwrap();
+            let p = dir.path().join("studio.db");
+            std::fs::write(&p, b"SQLite format").unwrap();
+            let err = StateStore::open(p.to_str().unwrap()).unwrap_err();
+            assert!(
+                matches!(err, StateError::NotV2 { .. }),
+                "truncated header must be exactly NotV2, got: {err:?}"
+            );
+        }
+        // (d) 1 KiB non-header bytes.
+        for _ in 0..50 {
+            let dir = tempfile::tempdir().unwrap();
+            let p = dir.path().join("studio.db");
+            let mut bytes = pseudo_bytes(0xC0FFEE, 1024);
+            // Guarantee non-header so the input is well-formed garbage.
+            bytes[0] ^= 0xFF;
+            if bytes[..16] == *super::SQLITE_MAGIC {
+                bytes[0] ^= 0x01;
+            }
+            std::fs::write(&p, &bytes).unwrap();
+            let err = StateStore::open(p.to_str().unwrap()).unwrap_err();
+            assert!(
+                matches!(err, StateError::NotV2 { .. }),
+                "random garbage must be exactly NotV2, got: {err:?}"
+            );
+        }
+        // (e) Valid DB control → Ok on all 50 re-opens.
+        {
+            let dir = tempfile::tempdir().unwrap();
+            let p = dir.path().join("studio.db");
+            {
+                let s = StateStore::open(p.to_str().unwrap()).unwrap();
+                s.upsert_task("t1", "coder", "building").unwrap();
+            }
+            for _ in 0..50 {
+                assert!(
+                    StateStore::open(p.to_str().unwrap()).is_ok(),
+                    "valid DB must always open"
+                );
+            }
+        }
+        // (f) Header-spoofed corrupt → Sqlite (union load-bearing, TOCTOU).
+        for _ in 0..50 {
+            let dir = tempfile::tempdir().unwrap();
+            let p = dir.path().join("studio.db");
+            let mut bytes = super::SQLITE_MAGIC.to_vec();
+            bytes.extend_from_slice(&pseudo_bytes(0xDEAD, 1024));
+            std::fs::write(&p, &bytes).unwrap();
+            let err = StateStore::open(p.to_str().unwrap()).unwrap_err();
+            assert!(
+                matches!(err, StateError::Sqlite(_)),
+                "header-spoofed corrupt must stay Sqlite (race path), got: {err:?}"
+            );
+        }
     }
 }

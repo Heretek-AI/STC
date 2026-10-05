@@ -211,51 +211,28 @@ impl FrozenCandidate {
     }
 }
 
-/// Exactly one bounded correction per freeze — RUNTIME-ENFORCED (QA-R1).
+/// Exactly one bounded correction per freeze — RUNTIME-ENFORCED (QA-R1,
+/// hardened V02-B/H2: the former in-memory budget type was REMOVED).
 /// A blocked gate run consumes the single per-freeze attempt via
 /// [`claim_correction`], persisted in the DB, so enforcement never depends on
-/// the caller holding (or honestly reusing) a `CorrectionBudget` object: a
-/// fresh object per attempt buys nothing. This struct remains as an advisory
-/// pre-flight helper; the DB is the authority.
-#[derive(Debug)]
-pub struct CorrectionBudget {
-    attempts: u32,
-    pub max: u32,
-}
-
-impl CorrectionBudget {
-    pub fn new() -> Self {
-        Self {
-            attempts: 0,
-            max: 1,
-        }
-    }
-
-    pub fn request(&mut self) -> Result<(), FreezeError> {
-        if self.attempts >= self.max {
-            return Err(FreezeError::BudgetSpent);
-        }
-        self.attempts += 1;
-        Ok(())
-    }
-
-    pub fn spent(&self) -> bool {
-        self.attempts >= self.max
-    }
-}
-
-impl Default for CorrectionBudget {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
+/// any caller-held object: a fresh caller per attempt buys nothing. There is
+/// intentionally NO in-memory budget type left in this module — the DB
+/// (`correction_attempts` + `claim_correction`, `CORRECTION_MAX_ATTEMPTS=1`)
+/// is the sole authority. Grep gate: zero constructor occurrences of the
+/// removed type remain in `studio-core/src` (see the constructor-absent test
+/// in this module); the fresh-object unit test below (`claim_correction_…`)
+/// stays green as the authority proof.
+///
 /// QA-R1: consume one correction attempt for a frozen candidate, in the DB.
 /// First blocked run per `freeze_hash` succeeds (the caller may correct once
 /// and retry); any further blocked run for the SAME hash fails closed with
-/// [`FreezeError::BudgetSpent`] — even if the caller passes a fresh budget
-/// object or none at all. Check-and-increment runs inside one
+/// [`FreezeError::BudgetSpent`] — even with fresh caller state or none at
+/// all (no budget object exists to pass; the removed type has zero
+/// occurrences in `studio-core/src`). Check-and-increment runs inside one
 /// `BEGIN IMMEDIATE` write txn, so concurrent claimers cannot both succeed.
+/// Unlike `garbage_discriminant` (advisory pre-read prediction in `state`),
+/// this function GATES inside the write txn: the pre-check/increment and
+/// the decision are one atomic step, so there is no TOCTOU split here.
 pub const CORRECTION_MAX_ATTEMPTS: u32 = 1;
 
 pub fn claim_correction(store: &StateStore, freeze_hash: &str) -> Result<(), FreezeError> {
@@ -585,12 +562,45 @@ mod tests {
         assert_eq!(validation_depth(RiskTier::Release), (2, true));
     }
 
+    /// V02-B/H2 kill-gated spike: removed-type constructor-absent grep gate.
+    ///
+    /// Kill criteria: FAILS pre-fix (the in-memory budget constructor existed
+    /// in `studio-core/src`, so the scan finds it); PASSES post-fix (zero
+    /// occurrences). Falsifies: re-introducing any caller-held budget
+    /// constructor in runtime source. The needle is assembled at runtime so
+    /// this test's own source never contains the contiguous constructor
+    /// spelling the scan looks for (no self-match false positive).
+    /// The fresh-object authority proof is the next test, which stays green.
     #[test]
-    fn correction_budget_is_single_use_typed() {
-        let mut b = CorrectionBudget::new();
-        assert!(b.request().is_ok());
-        assert!(b.spent());
-        assert_eq!(b.request().unwrap_err(), FreezeError::BudgetSpent);
+    fn removed_budget_constructor_absent_from_runtime_src() {
+        // Assemble without ever writing the contiguous spelling literally.
+        let needle = ["Correction", "Budget", "::", "new"].concat();
+        assert_eq!(needle.len(), 21);
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for e in std::fs::read_dir(dir).unwrap() {
+                let p = e.unwrap().path();
+                if p.is_dir() {
+                    walk(&p, out);
+                } else if p.extension().map(|x| x == "rs").unwrap_or(false) {
+                    out.push(p);
+                }
+            }
+        }
+        let mut files = vec![];
+        walk(&root, &mut files);
+        assert!(!files.is_empty(), "runtime src must contain Rust files");
+        let mut hits = vec![];
+        for f in &files {
+            let text = std::fs::read_to_string(f).unwrap();
+            if text.contains(&needle) {
+                hits.push(f.clone());
+            }
+        }
+        assert!(
+            hits.is_empty(),
+            "removed budget constructor must have zero occurrences in studio-core/src, found in: {hits:?}"
+        );
     }
 
     #[test]

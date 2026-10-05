@@ -1,0 +1,6 @@
+{
+  "phase": "harden-02-contract",
+  "goal": "Harden h1-02 residuals: M12 exact-typed narrowing, CorrectionBudget removal/trap, DAG cage, receipt guard (V02-A/B/C/D + H1-H4 clean-room)",
+  "acceptance": [],
+  "status": "briefed"
+}

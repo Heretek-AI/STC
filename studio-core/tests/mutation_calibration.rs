@@ -11,8 +11,8 @@ use std::sync::Mutex;
 use studio_core::roles::{RolePack, SpawnPolicy};
 use studio_core::state::{StateError, StateStore};
 use studio_core::verify::{
-    burn_token, freeze_candidate, issue_token, produce_release_receipt, run_gate_order,
-    BurnedToken, CorrectionBudget, FreezeError, GateError, GateEvidence, GateTask, GitBackend,
+    burn_token, claim_correction, freeze_candidate, issue_token, produce_release_receipt,
+    run_gate_order, BurnedToken, FreezeError, GateError, GateEvidence, GateTask, GitBackend,
     LandingError, OwnerAuthorization, ReceiptError, RELEASE_AUTHORIZATION_V1,
 };
 
@@ -61,12 +61,22 @@ fn m1_tampered_content_diverges_typed() {
     assert!(matches!(err, FreezeError::TreeDiverged { .. }));
 }
 
-/// M2 (P02): second correction → BudgetSpent.
+/// M2 (P02/H2): second correction → BudgetSpent via the runtime DB.
+/// V02-B hardening: the in-memory budget type was REMOVED — this mutant now
+/// proves the DB authority directly (fresh store per test, no caller object).
+/// First claim succeeds, second claim for the SAME hash is spent typed, a
+/// different hash is unaffected.
 #[test]
 fn m2_double_correction_spent_typed() {
-    let mut b = CorrectionBudget::new();
-    b.request().unwrap();
-    assert_eq!(b.request().unwrap_err(), FreezeError::BudgetSpent);
+    let store = StateStore::open_in_memory().unwrap();
+    let c = candidate();
+    assert!(claim_correction(&store, &c.freeze_hash).is_ok());
+    assert_eq!(
+        claim_correction(&store, &c.freeze_hash).unwrap_err(),
+        FreezeError::BudgetSpent
+    );
+    let other = freeze_candidate("r", vec![("a".into(), "2".into())], "x", None);
+    assert!(claim_correction(&store, &other.freeze_hash).is_ok());
 }
 
 /// M3 (P02): land with an unburned token → AckNotBurned at proof construction.
@@ -254,7 +264,13 @@ async fn m11_control_char_worktree_refused_typed() {
     );
 }
 
-/// M12 (P01): garbage bytes are never a store — typed refusal on open.
+/// M12 (P01/H1): garbage bytes are never a store — exact typed refusal.
+/// V02-A hardening: the magic-byte discriminant refuses steady-state garbage
+/// deterministically as `NotV2{found:0}` BEFORE SQLite runs (narrowed from the
+/// former `Sqlite(_) | NotV2{..}` union). The union stays load-bearing ONLY
+/// for the header-spoof/TOCTOU race (magic + corrupt body → `Sqlite`; see
+/// the `m12_discriminant_corpus_6_inputs_x50_runs_exact_typed` spike in
+/// `state` and `SQLITE_MAGIC` docs).
 #[test]
 fn m12_garbage_file_never_becomes_a_store() {
     let dir = tempfile::tempdir().unwrap();
@@ -262,8 +278,8 @@ fn m12_garbage_file_never_becomes_a_store() {
     std::fs::write(&path, b"not a database").unwrap();
     let err = StateStore::open(&path.to_string_lossy()).unwrap_err();
     assert!(
-        matches!(err, StateError::Sqlite(_) | StateError::NotV2 { .. }),
-        "garbage must fail closed typed, got: {err:?}"
+        matches!(err, StateError::NotV2 { found: 0 }),
+        "steady-state garbage must be exactly NotV2{{found:0}}, got: {err:?}"
     );
 }
 

@@ -304,10 +304,20 @@ pub fn land(
     Ok(record.source_sha.clone())
 }
 
-/// Deterministic next transition for a delivery record: a pure function of
-/// record state — same inputs always give the same next step (the V1 T5
-/// replay trace pins this; the DAG composes it in a later phase).
+/// Deterministic next transition for a delivery record (V02-C/H3 cage).
+///
+/// CAGE: pure over [`DeliveryRecord`] ONLY — a total function of
+/// `record.state` with no I/O, no global state, no clock, and no mutation of
+/// the record (takes `&`, returns an owned [`NextStep`]). Same inputs always
+/// give the same next step; interleaved calls never interact.
 /// `Queued → Land`, `Conflict → Requeue`, `GitIntegrated → Terminal`.
+///
+/// deferred:dag-phase — full DAG composition (multi-node scheduling,
+/// cross-record edges) does NOT exist in this tree and is intentionally NOT
+/// implied here. This function is the single-node delivery step the DAG will
+/// compose in its own phase; the 20-node replay test below pins the cage
+/// (purity + determinism over 20 records × 50 repetitions) and would fail
+/// closed on any hidden state, I/O, or mutation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NextStep {
     Land,
@@ -474,5 +484,75 @@ mod tests {
             land(&mut rec, &burned(&store, &hash, "t1"), &git, "repo", &store).unwrap_err(),
             LandingError::NotQueued { .. }
         ));
+    }
+
+    /// V02-C/H3 kill-gated spike: 20-node replay falsification of the
+    /// `next_transition` cage.
+    ///
+    /// Kill criteria: FAILS if `next_transition` ever reads I/O, global
+    /// state, the clock, mutates the record, or maps a state to the wrong
+    /// step (any hidden impurity breaks determinism across the 50
+    /// repetitions or cross-talk between interleaved records). PASSES only
+    /// for the caged pure mapping. Falsifies: DAG over-claims (this test
+    /// pins single-record purity; multi-node scheduling stays deferred).
+    #[test]
+    fn next_transition_cage_20_node_replay_is_pure_and_deterministic() {
+        // 20 nodes cycling deterministically through all three states.
+        let nodes: Vec<DeliveryRecord> = (0..20)
+            .map(|i| {
+                let state = match i % 3 {
+                    0 => DeliveryState::Queued,
+                    1 => DeliveryState::Conflict,
+                    _ => DeliveryState::GitIntegrated,
+                };
+                let mut rec = queue(
+                    &format!("t{i}"),
+                    "refs/heads/main",
+                    "oldsha",
+                    &format!("newsha-{i}"),
+                    &format!("freeze-{i:02}"),
+                );
+                rec.state = state;
+                if state == DeliveryState::GitIntegrated {
+                    rec.integrated_sha = Some(format!("newsha-{i}"));
+                }
+                rec
+            })
+            .collect();
+        let expected = |s: DeliveryState| match s {
+            DeliveryState::Queued => NextStep::Land,
+            DeliveryState::Conflict => NextStep::Requeue,
+            DeliveryState::GitIntegrated => NextStep::Terminal,
+        };
+        // Snapshot every record; 50 full replays must agree and mutate nothing.
+        let snapshots: Vec<DeliveryRecord> = nodes.to_vec();
+        for _ in 0..50 {
+            // Interleaved order (reverse) proves no cross-talk.
+            for (rec, snap) in nodes.iter().rev().zip(snapshots.iter().rev()) {
+                assert_eq!(next_transition(rec), expected(snap.state));
+                // Purity: the record is observably unchanged (takes `&`).
+                assert_eq!(rec.state, snap.state);
+                assert_eq!(rec.task_id, snap.task_id);
+                assert_eq!(rec.target_ref, snap.target_ref);
+                assert_eq!(rec.expected_old, snap.expected_old);
+                assert_eq!(rec.source_sha, snap.source_sha);
+                assert_eq!(rec.integrated_sha, snap.integrated_sha);
+                assert_eq!(rec.freeze_hash, snap.freeze_hash);
+            }
+            // Forward order agrees identically (order-independence).
+            for (rec, snap) in nodes.iter().zip(snapshots.iter()) {
+                assert_eq!(next_transition(rec), expected(snap.state));
+            }
+        }
+        // Count pins coverage: 7 Queued + 7 Conflict + 6 Integrated = 20.
+        let (mut q, mut c, mut g) = (0, 0, 0);
+        for rec in &nodes {
+            match next_transition(rec) {
+                NextStep::Land => q += 1,
+                NextStep::Requeue => c += 1,
+                NextStep::Terminal => g += 1,
+            }
+        }
+        assert_eq!((q, c, g), (7, 7, 6));
     }
 }

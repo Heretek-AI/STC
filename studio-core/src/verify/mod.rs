@@ -22,9 +22,11 @@
 //! [`GateEvidence`]; this runtime executes the tail end-to-end via
 //! [`run_gate_order`]: freeze → prove live==frozen → DoD evaluate (+ real
 //! tree-sitter syntax over delivered Rust) → burned ack → CAS land. The
-//! exactly-one correction is enforced by [`CorrectionBudget`] held by the
-//! caller across attempts: a blocked run consumes one request; a second
-//! correction is a typed refusal (re-freeze the new candidate instead).
+//! exactly-one correction is runtime-enforced per freeze hash in the DB
+//! ([`claim_correction`], `correction_attempts` table): no caller-held budget
+//! object exists — retries with fresh state and the same frozen content are
+//! refused with [`GateError::CorrectionSpent`]; only a re-freeze (new content
+//! hash) opens a new attempt.
 
 pub mod dod;
 pub mod freeze;
@@ -35,8 +37,8 @@ pub mod receipts;
 pub use dod::{evaluate_done, syntax_check, DodCheck, DodReceipt, TapOut};
 pub use freeze::{
     burn_token, claim_correction, freeze_candidate, issue_token, load_candidate, save_candidate,
-    validation_depth, AckLedger, CorrectionBudget, FreezeError, FrozenCandidate, RiskTier,
-    CORRECTION_MAX_ATTEMPTS, GENESIS_LINEAGE,
+    validation_depth, AckLedger, FreezeError, FrozenCandidate, RiskTier, CORRECTION_MAX_ATTEMPTS,
+    GENESIS_LINEAGE,
 };
 pub use landing::{
     land, next_transition, queue, BurnedToken, DeliveryRecord, DeliveryState, GitBackend,
@@ -159,10 +161,10 @@ pub fn run_gate_order(
     };
     let receipt = evaluate_done(&check);
     if !receipt.done() {
-        // QA-R1: the runtime owns the correction budget. A blocked run
-        // consumes the single per-freeze attempt IN THE DB — a caller holding
-        // a fresh `CorrectionBudget` (or none at all) gets no more
-        // corrections for this candidate; only a re-freeze (new hash) resets.
+        // QA-R1 (hardened V02-B/H2): the runtime owns the exactly-one
+        // correction bound IN THE DB — a retry with fresh caller state (or
+        // none at all) gets no more corrections for this candidate; only a
+        // re-freeze (new hash) resets. No caller-held budget type exists.
         match claim_correction(store, &candidate.freeze_hash) {
             Ok(()) => {}
             Err(FreezeError::BudgetSpent) => {
@@ -303,7 +305,7 @@ mod tests {
 
     #[test]
     fn runtime_bounds_corrections_without_caller_budget() {
-        // QA-R1: no CorrectionBudget object anywhere in this test — the
+        // QA-R1 (V02-B): no caller-held budget object anywhere in this test — the
         // runtime enforces the bound per freeze hash in the DB.
         let store = StateStore::open_in_memory().unwrap();
         let git = FakeGit {
