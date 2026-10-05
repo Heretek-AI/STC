@@ -16,8 +16,9 @@
 //! In-process by charter (V3: no network, <20s): workers are handles, not
 //! subprocesses; the lifecycle + accounting shape is what the pool ports,
 //! not socket code. All tool calls through pool workers still cross the
-//! single egress seam (`Registry::invoke`) — the pool never executes
-//! tools itself.
+//! single ordered egress seam (`Registry::invoke` with held lens, bound
+//! catalog, fresh receipt, and canonical containment) — the pool never
+//! executes tools itself.
 
 use std::collections::HashMap;
 use std::sync::{

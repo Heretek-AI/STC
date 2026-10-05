@@ -1,0 +1,6 @@
+{
+  "phase": "harden-03-gateway",
+  "goal": "Full rework gateway residuals: registry-held lens (N3), catalog-bound handles (N4), canonical containment (N5), closed-by-default slicing, ordered seam + merge proofs (V03-A1/A2/B/C/D + F1-F5 clean-room)",
+  "acceptance": [],
+  "status": "briefed"
+}

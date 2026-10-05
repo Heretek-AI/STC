@@ -8,8 +8,17 @@
 //! minimal named tool set (least privilege: compose small bundles, never
 //! one mega-bundle); the YAML gate declares which bundles exist and
 //! whether submission needs human review; submitting through a bundle
-//! whose tools are all unknown to the catalog (or unlisted by the lens)
-//! is a typed refusal.
+//! whose tools are unknown to the catalog is a typed refusal.
+//!
+//! V03-A2 catalog-bound handles (harden-03-gateway, full rework): bundle
+//! submission NO LONGER takes a caller-supplied catalog slice. The catalog
+//! authority is [`crate::mcp::registry::Registry`] via
+//! [`crate::mcp::registry::Registry::submit_bundle`], which re-validates
+//! every bundle tool against its held index on EVERY submit and demands a
+//! fresh [`crate::mcp::registry::CatalogHandle`]. A caller `Vec<String>`
+//! cannot be substituted (ghost-submit unrepresentable at compile time —
+//! there is no parameter for it); stale generations refuse typed as
+//! [`BundleError::StaleHandle`].
 //!
 //! Lockfile-neutral: hand-rolled YAML subset (mapping + `- ` lists at one
 //! indent level). No new dependencies.
@@ -27,6 +36,10 @@ pub enum BundleError {
     UnknownBundle { bundle: String, declared: String },
     #[error("submit through {bundle} needs review (gate requires approval)")]
     ReviewRequired { bundle: String },
+    #[error(
+        "stale catalog handle: expected generation {expected}, found {found} — reload invalidates"
+    )]
+    StaleHandle { expected: u64, found: u64 },
     #[error("bundle gate YAML parse: {detail}")]
     Parse { detail: String },
 }
@@ -39,6 +52,10 @@ pub struct Bundle {
 }
 
 /// The submit/review gate: declared bundles + review flag.
+///
+/// Data-only: parsing + offline [`BundleGate::validate`] live here.
+/// Submission lives on [`crate::mcp::registry::Registry::submit_bundle`]
+/// (catalog-bound, no caller catalog param).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BundleGate {
     pub bundles: BTreeMap<String, Bundle>,
@@ -131,8 +148,20 @@ impl BundleGate {
         })
     }
 
-    /// Validate every bundle tool against the catalog. Unknown → typed
-    /// (never silently dropped from the bundle).
+    /// Validate every bundle tool against a catalog snapshot. Unknown →
+    /// typed (never silently dropped from the bundle).
+    ///
+    /// LINT-ONLY, NEVER AUTH (F5 footgun closure): `catalog` is a
+    /// caller-supplied snapshot — a forged vector containing a ghost tool
+    /// PASSES this function by construction. It exists solely for offline
+    /// config lint (e.g. `studio bundle lint`) and tests. The SUBMIT seam
+    /// is [`crate::mcp::registry::Registry::submit_bundle`], which is
+    /// catalog-BOUND (no caller `catalog` param, held index + fresh
+    /// `CatalogHandle`, ghost refused typed on EVERY submit). Never gate
+    /// authorization on this function.
+    ///
+    /// Test-only callers: this is exercised by unit tests with a static
+    /// `catalog()` helper; production code must call `submit_bundle`.
     pub fn validate(&self, catalog: &[String]) -> Result<(), BundleError> {
         for b in self.bundles.values() {
             for t in &b.tools {
@@ -146,90 +175,104 @@ impl BundleGate {
         }
         Ok(())
     }
-
-    /// Submit through a bundle: unknown bundles deny typed; every bundle
-    /// tool is re-validated against `catalog` on EVERY submit (QA-R1: the
-    /// old signature never consulted the catalog, so `submit("evil")`
-    /// passed with ghost tools unless the caller remembered `validate`).
-    /// Lens gating rides the invoke seam downstream, so a bundle that
-    /// passes here is still lens-checked at call time. When the gate
-    /// requires review and `reviewed` is false, submission is a typed
-    /// refusal (the caller obtains approval through the P02 approval
-    /// service, then retries with `reviewed = true`).
-    pub fn submit(
-        &self,
-        bundle: &str,
-        reviewed: bool,
-        catalog: &[String],
-    ) -> Result<(), BundleError> {
-        let declared = self.bundles.keys().cloned().collect::<Vec<_>>().join(",");
-        let b = self
-            .bundles
-            .get(bundle)
-            .ok_or_else(|| BundleError::UnknownBundle {
-                bundle: bundle.into(),
-                declared,
-            })?;
-        for t in &b.tools {
-            if !catalog.contains(t) {
-                return Err(BundleError::UnknownTool {
-                    bundle: b.name.clone(),
-                    tool: t.clone(),
-                });
-            }
-        }
-        if self.review_required && !reviewed {
-            return Err(BundleError::ReviewRequired {
-                bundle: bundle.into(),
-            });
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     const YAML: &str = "review_required: true\nbundles:\n  fs-read:\n    - read\n    - code_search\n  fs-write:\n    - write\n";
+
+    fn manifest_three() -> String {
+        json!([
+            {"name": "read", "description": "read a file", "version": "1.0.0",
+             "tags": ["fs"], "schema": {"type": "object"}},
+            {"name": "code_search", "description": "search code", "version": "1.0.0",
+             "tags": ["fs"], "schema": {"type": "object"}},
+            {"name": "write", "description": "write a file", "version": "1.0.0",
+             "tags": ["fs"], "schema": {"type": "object"}}
+        ])
+        .to_string()
+    }
 
     fn catalog() -> Vec<String> {
         vec!["read".into(), "code_search".into(), "write".into()]
     }
 
     #[test]
-    fn parses_validates_and_gates_review() {
+    fn parses_validates_and_gates_review_bound() {
+        use crate::mcp::registry::Registry;
         let gate = BundleGate::parse_yaml(YAML).unwrap();
         assert!(gate.review_required);
         assert_eq!(gate.bundles.len(), 2);
         gate.validate(&catalog()).unwrap();
-        // Review gate holds without approval...
+        // Submit seam is registry-bound (no caller catalog param):
+        // review gate holds without approval, passes with it.
+        let reg = Registry::load_manifest(&manifest_three()).unwrap();
+        let handle = reg.catalog_handle();
         assert!(matches!(
-            gate.submit("fs-read", false, &catalog()).unwrap_err(),
+            reg.submit_bundle(&gate, "fs-read", false, &handle)
+                .unwrap_err(),
             BundleError::ReviewRequired { .. }
         ));
-        // ...and passes with it; unknown bundles deny typed.
-        assert!(gate.submit("fs-read", true, &catalog()).is_ok());
+        assert!(reg.submit_bundle(&gate, "fs-read", true, &handle).is_ok());
         assert!(matches!(
-            gate.submit("ghost", true, &catalog()).unwrap_err(),
+            reg.submit_bundle(&gate, "ghost", true, &handle)
+                .unwrap_err(),
             BundleError::UnknownBundle { .. }
         ));
     }
 
     #[test]
-    fn submit_rejects_ghost_tools_without_prior_validate() {
-        // QA-R1: review_required:false + bundles:{evil:[ghost-tool]} used to
-        // submit Ok without ever consulting the catalog. Now every submit
-        // re-validates against the catalog it is given.
+    fn submit_rejects_ghost_tools_catalog_bound_no_caller_catalog() {
+        // V03-A2: ghost tools refuse typed via the HELD catalog. There is
+        // no `catalog: &[String]` parameter to forge — the only catalog is
+        // the registry index, so a caller vector with the ghost tool cannot
+        // authorize it.
+        use crate::mcp::registry::Registry;
         let gate =
             BundleGate::parse_yaml("review_required: false\nbundles:\n  evil:\n    - ghost-tool\n")
                 .unwrap();
+        let reg = Registry::load_manifest(&manifest_three()).unwrap();
+        let handle = reg.catalog_handle();
         assert!(matches!(
-            gate.submit("evil", false, &catalog()).unwrap_err(),
+            reg.submit_bundle(&gate, "evil", false, &handle)
+                .unwrap_err(),
             BundleError::UnknownTool { .. }
         ));
-        // A catalog that actually declares the tool passes (no review gate).
-        assert!(gate.submit("evil", false, &["ghost-tool".into()]).is_ok());
+        // Stale handle refuses typed after reload.
+        let mut reg2 = Registry::load_manifest(&manifest_three()).unwrap();
+        let stale = reg2.catalog_handle();
+        reg2.reload(&manifest_three()).unwrap();
+        let gate2 =
+            BundleGate::parse_yaml("review_required: false\nbundles:\n  b:\n    - read\n").unwrap();
+        assert!(matches!(
+            reg2.submit_bundle(&gate2, "b", false, &stale).unwrap_err(),
+            BundleError::StaleHandle { .. }
+        ));
+    }
+
+    #[test]
+    fn validate_is_lint_only_forged_catalog_passes_but_submit_refuses() {
+        // F5 (qa-b): `validate(&forged_catalog)` PASSES by construction
+        // (caller snapshot, lint-only) — it must NEVER gate auth. The bound
+        // submit seam refuses the same ghost bundle via the HELD index.
+        use crate::mcp::registry::Registry;
+        let gate =
+            BundleGate::parse_yaml("review_required: false\nbundles:\n  evil:\n    - ghost-tool\n")
+                .unwrap();
+        let forged: Vec<String> = vec!["ghost-tool".into(), "read".into()];
+        // Lint passes with the forged snapshot (documents the footgun).
+        assert!(gate.validate(&forged).is_ok());
+        // Bound submit refuses the same bundle via the held catalog.
+        let reg = Registry::load_manifest(&manifest_three()).unwrap();
+        let handle = reg.catalog_handle();
+        assert!(matches!(
+            reg.submit_bundle(&gate, "evil", false, &handle)
+                .unwrap_err(),
+            BundleError::UnknownTool { .. }
+        ));
     }
 
     #[test]

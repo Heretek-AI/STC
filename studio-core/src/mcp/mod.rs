@@ -74,11 +74,22 @@
 //! (phase 02, c010): Read tier needs a read grant, Write tier needs a
 //! session grant + fencing lease, Exec tier always requires approval. The
 //! gateway never allows what the ACP gate denies — `Registry::invoke`
-//! consults the tier mapping for write-intent labelling, and the ACP
+//! (V03 ordered seam: unknown → coverage → deny → ondemand → held-lens →
+//! tier/object/write-intent incl. canonical containment → executor)
+//! consults the tier mapping plus the held lens and bound root, and the ACP
 //! `decide` remains the enforcement point for the actual call. Unknown
 //! tools are denied by BOTH layers (registry `UnknownTool`, ACP
 //! `UnknownTool`): the pairing is deliberate defense in depth, documented
 //! here so the two `UnknownTool` variants are not mistaken for redundancy.
+//!
+//! V03 hardening notes (harden-03-gateway): the seam takes NO lens and NO
+//! caller catalog — the lens is held (`rotate_lens`, audited) and the
+//! catalog is held (`submit_bundle`, generation-bound handles). Fresh
+//! registries cover nothing (`NotSliced` closed-by-default); reloads bump
+//! the generation and invalidate receipts/handles (`StaleHandle`). Path
+//! containment is canonical via the bound root
+//! (`bind_root`/`check_containment`, reusing `crate::worktree` normalize +
+//! symlink refusal), never substring-only.
 
 pub mod bundles;
 pub mod cli;

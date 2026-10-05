@@ -72,13 +72,23 @@ impl FixtureKind {
 }
 
 /// Redact secret-shaped runs (`sk-`/`sk_live_`-family + ≥16, `AKIA` + ≥16,
-/// `xoxa-/xoxb-/xoxp-/ghp_` markers). Returns the sanitized text + whether
+/// `xoxa-/xoxb-/xoxp-/xoxo-/xoxr-/ghp_/gho_/github_pat_` markers,
+/// `Bearer <token>` + ≥16). Returns the sanitized text + whether
 /// anything was cut. The farm asserts `redacted == true → output contains
 /// zero secret runs`.
 pub fn redact_secrets(text: &str) -> (String, bool) {
     let mut out = text.to_string();
     let mut cut = false;
-    for marker in ["xoxa-", "xoxb-", "xoxp-", "ghp_"] {
+    for marker in [
+        "xoxa-",
+        "xoxb-",
+        "xoxp-",
+        "xoxo-",
+        "xoxr-",
+        "ghp_",
+        "gho_",
+        "github_pat_",
+    ] {
         if out.contains(marker) {
             out = out.replace(marker, "[REDACTED]-");
             cut = true;
@@ -127,6 +137,40 @@ pub fn redact_secrets(text: &str) -> (String, bool) {
                 cut = true;
                 i += 4 + run.len();
                 continue;
+            }
+        }
+        // `Bearer <token>` (HTTP auth): `Bearer` + separator + token run
+        // ≥16 of token chars. The ≥16 threshold keeps prose (`Bearer of bad
+        // news` → `of` len 2) passing while catching real tokens
+        // (`Bearer abcdef1234567890ABCDEF`). Whole `Bearer <token>` is cut
+        // so the token never remains in clear.
+        if out[i..].starts_with("Bearer") {
+            let mut j = i + 6;
+            // Require a separator (space/tab/colon) so `BearerToken` prose
+            // does not trigger.
+            if j < b.len() && (b[j] == b' ' || b[j] == b'\t' || b[j] == b':') {
+                while j < b.len() && (b[j] == b' ' || b[j] == b'\t' || b[j] == b':') {
+                    j += 1;
+                }
+                let run = out[j..]
+                    .chars()
+                    .take_while(|c| {
+                        c.is_ascii_alphanumeric()
+                            || *c == '-'
+                            || *c == '.'
+                            || *c == '_'
+                            || *c == '~'
+                            || *c == '+'
+                            || *c == '/'
+                            || *c == '='
+                    })
+                    .collect::<String>();
+                if run.len() >= 16 {
+                    res.push_str("[REDACTED]");
+                    cut = true;
+                    i = j + run.len();
+                    continue;
+                }
             }
         }
         res.push(b[i] as char);
@@ -301,6 +345,52 @@ mod tests {
         assert!(!contains_secret_material(
             "flask_app task_manager desk-review"
         ));
+    }
+
+    #[test]
+    fn redactor_covers_qab_families_without_prose_fp() {
+        // F4 (qa-b): xoxo/xoxr, gho_, github_pat_, Bearer must redact;
+        // existing sk-/AKIA/xoxa/b/p/ghp_ stay green; prose stays clean.
+        for probe in [
+            "leak xoxo-12345678901234567890 here",
+            "leak xoxr-12345678901234567890 here",
+            "key gho_12345678901234567890123456 here",
+            "key github_pat_12345678901234567890123456 here",
+            "auth Bearer abcdef1234567890ABCDEF here",
+        ] {
+            assert!(contains_secret_material(probe), "must detect {probe:?}");
+            let (clean, cut) = redact_secrets(probe);
+            assert!(cut, "must cut {probe:?}");
+            assert!(
+                !contains_secret_material(&clean),
+                "clean must be clean for {probe:?}: {clean:?}"
+            );
+            // Zero leak of the raw token shape in the sanitized text.
+            assert!(
+                !clean.contains("12345678901234567890") || clean.contains("[REDACTED]"),
+                "{clean:?}"
+            );
+        }
+        // Existing families stay green.
+        for probe in [
+            "key sk-test-0123456789abcdef here",
+            "key AKIAIOSFODNN7EXAMPLEEXTRA here",
+            "token xoxa-12345678901234567890 here",
+            "token xoxb-12345678901234567890 here",
+            "token xoxp-12345678901234567890 here",
+            "key ghp_12345678901234567890123456 here",
+        ] {
+            assert!(contains_secret_material(probe), "{probe:?}");
+        }
+        // No FP on prose (incl. short Bearer prose).
+        for prose in [
+            "flask_app task_manager desk-review",
+            "Bearer of bad news",
+            "Bearer of",
+            "summary of bearer bonds",
+        ] {
+            assert!(!contains_secret_material(prose), "FP on {prose:?}");
+        }
     }
 
     #[test]
