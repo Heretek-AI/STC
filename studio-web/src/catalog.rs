@@ -39,6 +39,24 @@ pub struct CatalogEntry {
 /// the shared envelope is the correct amortization (not codegen). Full
 /// counts: see PHASE-RECEIPT §V7 (hand-written view #2 measured at 159
 /// lines vs generator template + schema estimate).
+///
+/// V10 codegen re-measure (this hardening phase, 7 entries): hand table is
+/// 60 lines for 7 entries (~8.6 lines/entry, all declarative); the rejected
+/// `catalog_entry!` macro alternative was measured at ~130 expanded LOC per
+/// entry in P04 (handler arms + serde impls + fixture literals + test
+/// scaffolding). Ratio holds at ~15× against generation here — the table +
+/// `check_catalog_shape` + `catalog_fixtures_cover_empty_loading_error`
+/// (typed parse per entry) remain the deliverable; no generator is added.
+/// Re-measure trigger: revisit only when a new view family needs a NEW
+/// envelope primitive (not more rows of the same table).
+///
+/// V14 decide-route defer (explicit): `POST /api/ask/:id/decide` (A1
+/// one-tap CAS) is intentionally NOT a catalog entry. The catalog lists
+/// GET read projections with empty/loading/error fixtures; the decide path
+/// is a write with 200/400/404/409/503 typed outcomes and no
+/// empty/loading/error fixture triple. Adding it to the table would force a
+/// false fixture shape. Pinned by `v14_decide_route_deferred` (catalog has
+/// no `decide` name/route; write-surface test owns the decide contract).
 pub const CATALOG: &[CatalogEntry] = &[
     CatalogEntry {
         name: "status",
@@ -132,5 +150,35 @@ mod tests {
         assert_eq!(CATALOG.len(), 7);
         assert_eq!(CATALOG[0].route, "/api/status");
         assert_eq!(CATALOG[1].route, "/api/war-room");
+    }
+
+    #[test]
+    fn v14_decide_route_deferred() {
+        // V14: the decide write path is NOT a catalog entry (read-view
+        // table only). FAILS if a future change registers it as a view.
+        for e in CATALOG {
+            assert!(
+                !e.name.contains("decide"),
+                "catalog must not list decide: {}",
+                e.name
+            );
+            assert!(
+                !e.route.contains("decide"),
+                "catalog must not list decide: {}",
+                e.route
+            );
+            assert_eq!(e.fixtures.len(), 3);
+        }
+    }
+
+    #[test]
+    fn v10_hand_table_still_beats_codegen() {
+        // V10 re-measure pin: 7 declarative rows stay an order of magnitude
+        // smaller than the rejected ~130 LOC/entry macro expansion.
+        // If the table ever grows past the generator crossover (~15 rows of
+        // NEW envelope primitives, not more rows), re-measure — until then
+        // hand-write holds by construction here.
+        assert_eq!(CATALOG.len(), 7);
+        check_catalog_shape().unwrap();
     }
 }

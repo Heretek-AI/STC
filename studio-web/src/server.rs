@@ -5,12 +5,18 @@
 //! Browser discipline: every `/api` route registers a GET handler only,
 //! EXCEPT the decide path which registers POST only — all other methods fall
 //! through to `405 Method Not Allowed` (pinned by
-//! `write_surface_is_decide_only`). There are NO other write endpoints. The
-//! server owns the projection (hub over `studio.db`); the browser reads.
+//! `write_surface_is_decide_only`, extended to HEAD/OPTIONS/TRACE/CONNECT).
+//! `GET` routes also answer `HEAD` via axum's `get()` (200 with headers, no
+//! body — safe by construction, pinned as 405-or-safe). There are NO other
+//! write endpoints. The server owns the projection (hub over `studio.db`);
+//! the browser reads.
 
 use axum::{
-    extract::{Path, Query, State},
-    http::StatusCode,
+    extract::{
+        rejection::{JsonRejection, QueryRejection},
+        Path, Query, State,
+    },
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{sse::Event, Html, IntoResponse, Sse},
     routing::{get, post},
     Json,
@@ -101,11 +107,58 @@ fn timed<T>(f: impl FnOnce() -> T) -> (T, u64) {
     (v, t0.elapsed().as_millis() as u64)
 }
 
+/// Short badge source: the DB basename (`ms1.db`). By design the badge
+/// keeps the short name (ms1_gate asserts the exact badge text); the
+/// distinguishing absolute path is always in `/api/health.db_path`
+/// (see `health_handler`) so two DBs named `studio.db` in different dirs
+/// never collide observably — pinned by `db_source_keeps_basename`.
 fn db_source(db_path: &str) -> String {
     std::path::Path::new(db_path)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "studio.db".into())
+}
+
+/// Typed JSON for query-string rejections (fix 5): axum's default is
+/// `text/plain`; the F1 typed-JSON promise requires `application/json`
+/// with an `error` field for every 400. Invalid `since`/`limit` (e.g.
+/// `?since=abc`, `?limit=1.5`) lands here.
+fn bad_query_response(err: QueryRejection) -> axum::response::Response {
+    let status = err.status();
+    (
+        status,
+        Json(json!({"error": "bad_query", "detail": err.to_string()})),
+    )
+        .into_response()
+}
+
+/// Typed JSON for decide-body rejections (fix 5): 415 wrong content-type,
+/// 400 malformed JSON, 422 missing/wrong-typed fields — all JSON typed,
+/// never `text/plain`. The `error` code mirrors the status.
+fn bad_body_response(err: JsonRejection) -> axum::response::Response {
+    let status = err.status();
+    let code = match status {
+        StatusCode::UNSUPPORTED_MEDIA_TYPE => "unsupported_media_type",
+        StatusCode::UNPROCESSABLE_ENTITY => "unprocessable_entity",
+        _ => "bad_request",
+    };
+    (
+        status,
+        Json(json!({"error": code, "detail": err.to_string()})),
+    )
+        .into_response()
+}
+
+/// Retry guidance headers on `Lost` (fix 8): `X-Resync-From` names the
+/// `floor_seq` to re-request from, `Retry-After: 1` tells slow consumers
+/// to back off one second before resyncing (never retry the stale cursor).
+fn lost_headers(floor_seq: i64) -> HeaderMap {
+    let mut h = HeaderMap::new();
+    h.insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
+    if let Ok(v) = HeaderValue::from_str(&floor_seq.to_string()) {
+        h.insert("x-resync-from", v);
+    }
+    h
 }
 
 fn daemon_status() -> DaemonDto {
@@ -115,16 +168,27 @@ fn daemon_status() -> DaemonDto {
 /// GET /api/status — the V7 catalog entry. 503 (legible JSON) when no poll
 /// ever succeeded (DB missing): fail closed, never an empty-200 masquerading
 /// as data. F4: `?since=` threads the caller's event cursor into the
-/// taxonomy (cursor below the ring floor → `Lost`); omitted → age verdict.
+/// taxonomy (cursor below the ring floor OR ahead of the head → `Lost`,
+/// including future cursors and old-epoch stale cursors); omitted → age
+/// verdict. On `Lost` the response carries `X-Resync-From` + `Retry-After`.
 async fn status_handler(
     State(st): State<Arc<AppState>>,
-    Query(p): Query<HistoryParams>,
+    query: Result<Query<HistoryParams>, QueryRejection>,
 ) -> impl IntoResponse {
+    let p = match query {
+        Ok(q) => q.0,
+        Err(e) => return bad_query_response(e),
+    };
     let daemon_reachable = daemon_status().reachable;
     match st.hub.status_view(daemon_reachable, p.since) {
         Some(mut dto) => {
             dto.daemon_reachable = daemon_reachable;
-            (StatusCode::OK, Json(dto)).into_response()
+            if dto.staleness.state == crate::api::StalenessState::Lost {
+                let floor = st.hub.hub_report().floor_seq;
+                (StatusCode::OK, lost_headers(floor), Json(dto)).into_response()
+            } else {
+                (StatusCode::OK, Json(dto)).into_response()
+            }
         }
         None => (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -172,17 +236,47 @@ async fn ask_handler(State(st): State<Arc<AppState>>) -> impl IntoResponse {
 }
 
 /// POST /api/ask/:id/decide — the A1 one-tap decision (THIS phase wires it).
-/// Body: `{approved: bool, reason: String}` (reason 1..=1024 chars).
-/// Typed outcomes: 200 (durable ledger row) · 400 bad reason · 404 unknown
-/// request · 409 already decided · 503 DB unwritable. The single-shot CAS in
-/// `decide_stored` is the only write path; everything else stays GET-only.
+/// Body: `{approved: bool, reason: String}` (reason 1..=1024 chars, counted
+/// in chars not bytes). Typed outcomes: 200 (durable ledger row) · 400 bad
+/// reason/bad JSON · 404 unknown request (consistent JSON shape for encoded
+/// slashes; overlong/control ids are 404 without echo) · 409 already decided
+/// · 415 wrong content-type · 422 missing/wrong-typed fields · 503 DB
+/// unwritable. The single-shot CAS in `decide_stored` is the only write
+/// path; everything else stays GET-only.
+/// Route parsing (fix 11): `id` is bound to 1..=256 chars; `/`, NUL and
+/// control chars are invalid (never echoed — no `%00` leak); overlong ids
+/// are typed 404 without echo.
+pub const DECIDE_ID_MAX_CHARS: usize = 256;
+
+fn decide_id_invalid(id: &str) -> bool {
+    let n = id.chars().count();
+    n == 0
+        || n > DECIDE_ID_MAX_CHARS
+        || id.contains('\0')
+        || id.contains('/')
+        || id.chars().any(|c| c.is_control())
+}
+
 async fn decide_handler(
     State(st): State<Arc<AppState>>,
     Path(id): Path<String>,
-    Json(body): Json<DecideBody>,
+    body: Result<Json<DecideBody>, JsonRejection>,
 ) -> impl IntoResponse {
+    if decide_id_invalid(&id) {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "unknown_request", "detail": "no approval (invalid id)"})),
+        )
+            .into_response();
+    }
+    let body = match body {
+        Ok(b) => b.0,
+        Err(e) => return bad_body_response(e),
+    };
     let reason = body.reason.trim();
-    if reason.is_empty() || reason.len() > 1024 {
+    // Fix 10: chars not bytes — 1024 `é` (2048 bytes) is 1024 chars, valid.
+    let reason_chars = reason.chars().count();
+    if reason_chars == 0 || reason_chars > 1024 {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "bad_reason", "detail": "reason must be 1..=1024 chars"})),
@@ -250,7 +344,18 @@ fn bucket_for(status: &str, needs_input: bool) -> (u32, &'static str) {
 
 /// GET /api/war-room — attention-first buckets + permission notifications.
 /// Pure read: hub snapshot tasks × pending approvals from the durable store.
-async fn war_room_handler(State(st): State<Arc<AppState>>) -> impl IntoResponse {
+/// Badge parity (fix 8): `?since=` threads the cursor into the staleness
+/// taxonomy via `seq_gap_for` (floor/future/epoch); omitted stays honest
+/// age-only by design (documented). On `Lost` the response carries
+/// `X-Resync-From` + `Retry-After`.
+async fn war_room_handler(
+    State(st): State<Arc<AppState>>,
+    query: Result<Query<HistoryParams>, QueryRejection>,
+) -> impl IntoResponse {
+    let q = match query {
+        Ok(v) => v.0,
+        Err(e) => return bad_query_response(e),
+    };
     let source = db_source(&st.db_path);
     let ((snap_opt, approvals_opt), age) = timed(|| {
         let store = StateStore::open_readonly(&st.db_path).ok();
@@ -321,12 +426,23 @@ async fn war_room_handler(State(st): State<Arc<AppState>>) -> impl IntoResponse 
     let dto = WarRoomDto {
         source: source.clone(),
         db_age_ms: age,
-        staleness: staleness_of(&source, age, snap.change_seq, stale_after, false),
+        staleness: staleness_of(
+            &source,
+            age,
+            snap.change_seq,
+            stale_after,
+            st.hub.seq_gap_for(q.since),
+        ),
         change_seq: snap.change_seq,
         buckets: out,
         notifications,
     };
-    (StatusCode::OK, Json(dto)).into_response()
+    if dto.staleness.state == crate::api::StalenessState::Lost {
+        let floor = st.hub.hub_report().floor_seq;
+        (StatusCode::OK, lost_headers(floor), Json(dto)).into_response()
+    } else {
+        (StatusCode::OK, Json(dto)).into_response()
+    }
 }
 
 /// The HookProvider protocol version this server speaks (f05-px-events).
@@ -382,12 +498,20 @@ fn normalize_cdc(seq: i64, tbl: &str, row: &str, op: &str, new: &Option<String>)
 /// GET /api/agent-stream — normalized AgentEvent union over the hub ring
 /// (`?since=`/`limit=` cursor with Lost gap semantics) + latest agent-origin
 /// `events` rows + HookProvider protocol record. Unknown versions refused.
+/// `limit` threads into both the history page and the SSE-equivalent event
+/// slice with the shared [1,1024] clamp (fix 3); negative clamps to 1 like
+/// HTTP. On `Lost` the response carries `X-Resync-From` + `Retry-After`.
 async fn agent_stream_handler(
     State(st): State<Arc<AppState>>,
-    Query(p): Query<HistoryParams>,
+    query: Result<Query<HistoryParams>, QueryRejection>,
 ) -> impl IntoResponse {
+    let p = match query {
+        Ok(v) => v.0,
+        Err(e) => return bad_query_response(e),
+    };
     let source = db_source(&st.db_path);
-    let page = st.hub.history(p.since.unwrap_or(0), p.limit.unwrap_or(128));
+    let limit = p.limit.unwrap_or(128).clamp(1, 1024) as usize;
+    let page = st.hub.history(p.since.unwrap_or(0), limit);
     let events: Vec<AgentEventDto> = page
         .events
         .iter()
@@ -436,13 +560,26 @@ async fn agent_stream_handler(
         providers,
         events,
     };
-    (StatusCode::OK, Json(dto)).into_response()
+    if dto.staleness.state == crate::api::StalenessState::Lost {
+        (StatusCode::OK, lost_headers(page.floor_seq), Json(dto)).into_response()
+    } else {
+        (StatusCode::OK, Json(dto)).into_response()
+    }
 }
 
 /// GET /api/audit — kanban board (tasks by lane + receipt evidence) +
 /// head-SHA-fenced feedback (frozen candidates; a row applies only at its
 /// recorded head — `current_head` marks the live fence per target).
-async fn audit_handler(State(st): State<Arc<AppState>>) -> impl IntoResponse {
+/// Badge parity (fix 8): `?since=` threads like war-room; omitted is
+/// honest age-only. On `Lost` carries retry headers.
+async fn audit_handler(
+    State(st): State<Arc<AppState>>,
+    query: Result<Query<HistoryParams>, QueryRejection>,
+) -> impl IntoResponse {
+    let q = match query {
+        Ok(v) => v.0,
+        Err(e) => return bad_query_response(e),
+    };
     let source = db_source(&st.db_path);
     let ((snap_opt, frozen), age) = timed(|| {
         let store = StateStore::open_readonly(&st.db_path).ok();
@@ -524,12 +661,23 @@ async fn audit_handler(State(st): State<Arc<AppState>>) -> impl IntoResponse {
     let dto = AuditDto {
         source: source.clone(),
         db_age_ms: age,
-        staleness: staleness_of(&source, age, snap.change_seq, stale_after, false),
+        staleness: staleness_of(
+            &source,
+            age,
+            snap.change_seq,
+            stale_after,
+            st.hub.seq_gap_for(q.since),
+        ),
         change_seq: snap.change_seq,
         columns,
         feedback,
     };
-    (StatusCode::OK, Json(dto)).into_response()
+    if dto.staleness.state == crate::api::StalenessState::Lost {
+        let floor = st.hub.hub_report().floor_seq;
+        (StatusCode::OK, lost_headers(floor), Json(dto)).into_response()
+    } else {
+        (StatusCode::OK, Json(dto)).into_response()
+    }
 }
 
 /// Bundled per-agent detection manifest (f05-herdr-detect PATTERN ONLY).
@@ -565,7 +713,16 @@ fn agent_state(detected: bool, daemon_reachable: bool) -> &'static str {
 /// optional JSON override file via `STUDIO_MCP_MANIFEST` + remote status via
 /// `STUDIO_MCP_MANIFEST_URL`, listed never fetched) with explain strings and
 /// working/blocked/idle flags from real signals.
-async fn mcp_handler(State(st): State<Arc<AppState>>) -> impl IntoResponse {
+/// Badge parity (fix 8): `?since=` threads like war-room; omitted is honest
+/// age-only. On `Lost` carries retry headers.
+async fn mcp_handler(
+    State(st): State<Arc<AppState>>,
+    query: Result<Query<HistoryParams>, QueryRejection>,
+) -> impl IntoResponse {
+    let q = match query {
+        Ok(v) => v.0,
+        Err(e) => return bad_query_response(e),
+    };
     let source = db_source(&st.db_path);
     let (seq_opt, age) = timed(|| {
         StateStore::open_readonly(&st.db_path)
@@ -675,11 +832,16 @@ async fn mcp_handler(State(st): State<Arc<AppState>>) -> impl IntoResponse {
     let dto = McpRegistryDto {
         source: source.clone(),
         db_age_ms: age,
-        staleness: staleness_of(&source, age, seq, stale_after, false),
+        staleness: staleness_of(&source, age, seq, stale_after, st.hub.seq_gap_for(q.since)),
         change_seq: seq,
         agents,
     };
-    (StatusCode::OK, Json(dto)).into_response()
+    if dto.staleness.state == crate::api::StalenessState::Lost {
+        let floor = st.hub.hub_report().floor_seq;
+        (StatusCode::OK, lost_headers(floor), Json(dto)).into_response()
+    } else {
+        (StatusCode::OK, Json(dto)).into_response()
+    }
 }
 
 /// Credential-file presence probe (f05-oh-acp-authprobe): existence only —
@@ -695,7 +857,16 @@ fn home_join(rel: &str) -> Option<String> {
 /// GET /api/providers — health-probe cache with TTL + budgets over the real
 /// `token_ledger` + per-harness ACP auth-status probes (presence checks real,
 /// inapplicable mechanisms report `unknown`, never fake-ok).
-async fn providers_handler(State(st): State<Arc<AppState>>) -> impl IntoResponse {
+/// Badge parity (fix 8): `?since=` threads like war-room; omitted is honest
+/// age-only. On `Lost` carries retry headers.
+async fn providers_handler(
+    State(st): State<Arc<AppState>>,
+    query: Result<Query<HistoryParams>, QueryRejection>,
+) -> impl IntoResponse {
+    let q = match query {
+        Ok(v) => v.0,
+        Err(e) => return bad_query_response(e),
+    };
     let source = db_source(&st.db_path);
     let ((budgets, lifetime, seq_opt), age) = timed(|| {
         let store = StateStore::open_readonly(&st.db_path).ok();
@@ -781,14 +952,19 @@ async fn providers_handler(State(st): State<Arc<AppState>>) -> impl IntoResponse
     let dto = ProvidersDto {
         source: source.clone(),
         db_age_ms: age,
-        staleness: staleness_of(&source, age, seq, stale_after, false),
+        staleness: staleness_of(&source, age, seq, stale_after, st.hub.seq_gap_for(q.since)),
         change_seq: seq,
         probes: vec![daemon_probe, db_probe],
         budgets: budgets_dto,
         lifetime_total: lifetime,
         auth,
     };
-    (StatusCode::OK, Json(dto)).into_response()
+    if dto.staleness.state == crate::api::StalenessState::Lost {
+        let floor = st.hub.hub_report().floor_seq;
+        (StatusCode::OK, lost_headers(floor), Json(dto)).into_response()
+    } else {
+        (StatusCode::OK, Json(dto)).into_response()
+    }
 }
 
 /// GET /api/runs — multi-run compare slots (f05-openchamber-multirun, capped
@@ -798,7 +974,16 @@ async fn providers_handler(State(st): State<Arc<AppState>>) -> impl IntoResponse
 /// Per-model columns + guided walkthrough are DEFERRED: schema v2 tasks
 /// carry no run/model linkage, so a per-model matrix would be mock data —
 /// stated, not faked.
-async fn runs_handler(State(st): State<Arc<AppState>>) -> impl IntoResponse {
+/// Badge parity (fix 8): `?since=` threads like war-room; omitted is honest
+/// age-only. On `Lost` carries retry headers.
+async fn runs_handler(
+    State(st): State<Arc<AppState>>,
+    query: Result<Query<HistoryParams>, QueryRejection>,
+) -> impl IntoResponse {
+    let q = match query {
+        Ok(v) => v.0,
+        Err(e) => return bad_query_response(e),
+    };
     let source = db_source(&st.db_path);
     let ((records, snap_opt), age) = timed(|| {
         let store = StateStore::open_readonly(&st.db_path).ok();
@@ -839,55 +1024,91 @@ async fn runs_handler(State(st): State<Arc<AppState>>) -> impl IntoResponse {
     let dto = RunsDto {
         source: source.clone(),
         db_age_ms: age,
-        staleness: staleness_of(&source, age, seq, stale_after, false),
+        staleness: staleness_of(&source, age, seq, stale_after, st.hub.seq_gap_for(q.since)),
         change_seq: seq,
         runs,
         deferred: "per-model columns + guided changes walkthrough need task→run/model linkage (schema change) — deferred; run slots + evidence counts above are live worktree/receipt data.".into(),
     };
-    (StatusCode::OK, Json(dto)).into_response()
+    if dto.staleness.state == crate::api::StalenessState::Lost {
+        let floor = st.hub.hub_report().floor_seq;
+        (StatusCode::OK, lost_headers(floor), Json(dto)).into_response()
+    } else {
+        (StatusCode::OK, Json(dto)).into_response()
+    }
 }
 
 #[derive(Debug, Deserialize)]
 struct HistoryParams {
     since: Option<i64>,
-    limit: Option<usize>,
+    /// Signed so `?limit=-1` parses and clamps to 1 like HTTP (fix 3);
+    /// non-numeric (`abc`, `1.5`, empty) still rejects as typed 400 JSON.
+    limit: Option<i64>,
+}
+
+/// Clamp the signed `limit` query into the shared [1,1024] window.
+fn clamp_limit(limit: Option<i64>) -> usize {
+    limit.unwrap_or(128).clamp(1, 1024) as usize
 }
 
 /// GET /api/events?since=N&limit=M — history cursor with Lost gap semantics.
+/// Future cursors (`since > head`) and stale epoch cursors are `Lost` with
+/// no rows (fixes 1-2); on `Lost` the response carries `X-Resync-From` +
+/// `Retry-After` (fix 8). Invalid queries are typed 400 JSON (fix 5).
 async fn events_handler(
     State(st): State<Arc<AppState>>,
-    Query(p): Query<HistoryParams>,
+    query: Result<Query<HistoryParams>, QueryRejection>,
 ) -> impl IntoResponse {
-    let dto: HistoryDto = st.hub.history(p.since.unwrap_or(0), p.limit.unwrap_or(128));
-    (StatusCode::OK, Json(dto)).into_response()
+    let p = match query {
+        Ok(v) => v.0,
+        Err(e) => return bad_query_response(e),
+    };
+    let dto: HistoryDto = st.hub.history(p.since.unwrap_or(0), clamp_limit(p.limit));
+    if dto.gap == GapKind::Lost {
+        (StatusCode::OK, lost_headers(dto.floor_seq), Json(dto)).into_response()
+    } else {
+        (StatusCode::OK, Json(dto)).into_response()
+    }
 }
 
-/// GET /api/events/stream?since=N — SSE: replay missed history, then live.
-/// A `gap` marker is emitted whenever the cursor predates the floor
-/// (Lost/Unavailable semantics). Liveness is poll-driven at the CDC cadence:
-/// the stream re-reads the hub ring rather than holding a broadcast
-/// subscription, so a slow consumer can never silently resume mid-gap — any
-/// eviction under the cursor surfaces as a `gap` marker.
+/// GET /api/events/stream?since=N&limit=M — SSE: replay missed history, then
+/// live. A `gap` marker is emitted whenever the cursor predates the floor
+/// OR runs ahead of the head (future cursor, fixes 1-2). `limit` threads
+/// from the query with the shared [1,1024] clamp (fix 3, no 512 hardcode);
+/// negative clamps to 1 like HTTP. No `ready` frame on SSE by design (fix
+/// 12, WS-only). Liveness is poll-driven at the CDC cadence: the stream
+/// re-reads the hub ring rather than holding a broadcast subscription, so a
+/// slow consumer can never silently resume mid-gap. Invalid queries are
+/// typed 400 JSON (fix 5), never `text/plain`.
 async fn stream_handler(
     State(st): State<Arc<AppState>>,
-    Query(p): Query<HistoryParams>,
+    query: Result<Query<HistoryParams>, QueryRejection>,
 ) -> impl IntoResponse {
-    Sse::new(PollStream::new(st.hub.clone(), p.since.unwrap_or(0)))
+    let p = match query {
+        Ok(v) => v.0,
+        Err(e) => return bad_query_response(e),
+    };
+    let since = p.since.unwrap_or(0).max(0);
+    let limit = clamp_limit(p.limit);
+    Sse::new(PollStream::new(st.hub.clone(), since, limit)).into_response()
 }
 
 /// Poll-driven SSE stream over the hub ring. Hand-rolled `Stream` (one tiny
 /// `futures-core` dep, no stream crates): the sleep poll registers the task
-/// waker correctly.
+/// waker correctly. `limit` bounds the initial replay AND live refresh pages
+/// (fix 3); on `Lost` the cursor jumps to `head_seq` (resync guidance).
 struct PollStream {
     hub: Hub,
     cursor: i64,
+    limit: usize,
     pending: std::vec::IntoIter<serde_json::Value>,
     sleep: std::pin::Pin<Box<tokio::time::Sleep>>,
 }
 
 impl PollStream {
-    fn new(hub: Hub, since: i64) -> Self {
-        let page = hub.history(since, 512);
+    fn new(hub: Hub, since: i64, limit: usize) -> Self {
+        let limit = limit.clamp(1, 1024);
+        let since = since.max(0);
+        let page = hub.history(since, limit);
         let mut pending = Vec::with_capacity(page.events.len() + 1);
         if page.gap == GapKind::Lost {
             pending.push(json!({"gap": "Lost", "head_seq": page.head_seq}));
@@ -895,17 +1116,23 @@ impl PollStream {
         for e in page.events {
             pending.push(serde_json::to_value(e).unwrap_or_default());
         }
-        let cursor = page.head_seq.max(since);
+        // On Lost jump to head (resync guidance); otherwise track max.
+        let cursor = if page.gap == GapKind::Lost {
+            page.head_seq
+        } else {
+            page.head_seq.max(since)
+        };
         Self {
             hub,
             cursor,
+            limit,
             pending: pending.into_iter(),
             sleep: Box::pin(tokio::time::sleep(std::time::Duration::from_millis(0))),
         }
     }
 
     fn refresh_from_ring(&mut self) {
-        let page = self.hub.history(self.cursor, 512);
+        let page = self.hub.history(self.cursor, self.limit);
         let mut pending = Vec::with_capacity(page.events.len() + 1);
         if page.gap == GapKind::Lost {
             self.cursor = page.head_seq;
@@ -1128,4 +1355,105 @@ pub fn status_keys(v: &serde_json::Value) -> Vec<String> {
             ks
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::GapKind;
+    use studio_core::state::StateStore;
+
+    fn seeded_db(n_tasks: usize) -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("studio.db");
+        let p = path.to_str().unwrap().to_owned();
+        let store = StateStore::open(&p).unwrap();
+        for i in 0..n_tasks.max(1) {
+            store
+                .upsert_task(&format!("t{i}"), "coder", "building")
+                .unwrap();
+        }
+        (dir, p)
+    }
+
+    #[tokio::test]
+    async fn v1_sse_parity_gap_marker_then_live() {
+        // V1 SSE parity: PollStream replays history identically — a cursor
+        // below the floor yields a leading {"gap":"Lost"} marker, then the
+        // live rows; cursor advances to head. FAILS pre-fix if the stream
+        // ever resumes mid-gap silently or mis-tracks the cursor.
+        let (_dir, p) = seeded_db(10);
+        let hub = Hub::new_with_cap(p, 2000, 4);
+        assert!(hub.poll_once());
+        let page = hub.history(0, 512);
+        assert_eq!(page.gap, GapKind::Lost);
+        let floor = page.floor_seq;
+        let head = page.head_seq;
+        // Stale cursor: gap marker first, cursor jumps to head.
+        let mut stream = PollStream::new(hub.clone(), 0, 512);
+        assert_eq!(stream.cursor, head.max(0));
+        let first: Vec<serde_json::Value> = stream.pending.by_ref().collect();
+        assert!(!first.is_empty());
+        assert_eq!(first[0].get("gap").and_then(|g| g.as_str()), Some("Lost"));
+        assert_eq!(
+            first[0].get("head_seq").and_then(|h| h.as_i64()),
+            Some(head)
+        );
+        assert_eq!(first.len(), 1, "Lost carries no rows, only the marker");
+        // Fresh cursor at the floor: no gap, contiguous live rows.
+        let mut live = PollStream::new(hub.clone(), floor, 512);
+        assert_eq!(live.cursor, head.max(floor));
+        let rows: Vec<serde_json::Value> = live.pending.by_ref().collect();
+        assert!(!rows.is_empty());
+        assert!(rows.iter().all(|v| v.get("gap").is_none()));
+        assert_eq!(rows.len(), 4);
+        let mut prev = floor;
+        for v in &rows {
+            let seq = v.get("seq").and_then(|s| s.as_i64()).unwrap();
+            assert!(seq > prev);
+            prev = seq;
+        }
+        assert_eq!(prev, head);
+    }
+
+    #[tokio::test]
+    async fn v1_sse_since_floor_never_spurious_gap() {
+        // V1 second leg: since<0 clamps (F2) — SSE from a nonsense cursor on
+        // a wide ring must NOT emit a spurious gap marker.
+        let (_dir, p) = seeded_db(3);
+        let hub = Hub::new_with_cap(p, 2000, 512);
+        assert!(hub.poll_once());
+        let mut stream = PollStream::new(hub, -5, 512);
+        let pending: Vec<serde_json::Value> = stream.pending.by_ref().collect();
+        assert!(pending.iter().all(|v| v.get("gap").is_none()));
+        assert_eq!(pending.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn sse_limit_threads_into_pollstream() {
+        // Fix 3: PollStream threads limit (no 512 hardcode); negative-equivalent
+        // (0) clamps to 1 like HTTP. FAILS pre-fix (10 rows despite limit=1).
+        let (_dir, p) = seeded_db(10);
+        let hub = Hub::new_with_cap(p, 2000, 512);
+        assert!(hub.poll_once());
+        let mut one = PollStream::new(hub.clone(), 0, 1);
+        let rows: Vec<serde_json::Value> = one.pending.by_ref().collect();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].get("seq").and_then(|s| s.as_i64()), Some(1));
+        let mut clamped = PollStream::new(hub.clone(), 0, 0);
+        let rows: Vec<serde_json::Value> = clamped.pending.by_ref().collect();
+        assert_eq!(rows.len(), 1, "limit 0 must clamp to 1");
+        let mut neg = PollStream::new(hub.clone(), -5, 1);
+        let rows: Vec<serde_json::Value> = neg.pending.by_ref().collect();
+        assert_eq!(rows.len(), 1, "clamped negative cursor honors limit");
+        // Future cursor still Lost with the threaded limit (no rows).
+        let mut fut = PollStream::new(hub.clone(), 999_999, 1);
+        let rows: Vec<serde_json::Value> = fut.pending.by_ref().collect();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].get("gap").and_then(|g| g.as_str()), Some("Lost"));
+        // No Ready frame on SSE by design (fix 12, WS-only).
+        for v in rows {
+            assert!(v.get("ready").is_none(), "SSE must carry no Ready");
+        }
+    }
 }

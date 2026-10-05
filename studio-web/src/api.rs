@@ -78,7 +78,7 @@ pub struct AskItemDto {
     pub reason: Option<String>,
     #[ts(type = "number")]
     pub created_ms: u64,
-    #[ts(type = "number")]
+    #[ts(type = "number | null")]
     pub decided_ms: Option<u64>,
     pub decision_enabled: bool,
 }
@@ -109,6 +109,24 @@ pub struct EventDto {
 ///   ring and the client must re-sync from `head_seq`.
 ///
 /// There is no silent truncation: overflow is always reported as `Lost`.
+///
+/// V4/V5 WS contract pre-registration (deferred transport, settled shape):
+/// the future WebSocket transport (P05+) MUST reuse this exact `GapKind`
+/// (`"None"` / `"Lost"` over the wire) and the `Ready` envelope below —
+/// `{"ready": {"head_seq": N, "floor_seq": M, "gap": <GapKind>}}` as the first
+/// WS frame after subscribe, then `event` frames identical to the SSE
+/// `EventDto` JSON. No WS endpoint exists in this phase (SSE only per F2);
+/// this doc + `v4_v5_ws_prereg_gapkind_serde` pin the wire shape so the
+/// later transport cannot silently diverge (e.g. renaming `Lost` or dropping
+/// the floor). F2 ViewShell keep: the shared envelope (badge/states/retry)
+/// stays transport-agnostic; only the frame pump changes.
+///
+/// WS Ready deferral (fix 12, explicitly pinned): the `Ready` envelope is
+/// WS-ONLY. SSE (`/api/events/stream`) carries NO `ready` frame — a stale
+/// cursor yields a `gap` marker (`{"gap":"Lost","head_seq":H}`), a fresh
+/// cursor yields `event` frames directly. An `Upgrade: websocket` request to
+/// the SSE endpoint is never 101 (still 200 `text/event-stream`); the
+/// contract test `ws_ready_deferred_no_upgrade` pins this.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub enum GapKind {
     None,
@@ -155,7 +173,7 @@ pub struct HealthDto {
     pub version: String,
     pub db_path: String,
     pub db_ok: bool,
-    #[ts(type = "number")]
+    #[ts(type = "number | null")]
     pub schema_version: Option<i64>,
     pub daemon: DaemonDto,
     pub hub: HubDto,
@@ -218,7 +236,7 @@ pub struct AgentEventDto {
     #[ts(type = "number")]
     pub protocol_version: u32,
     pub payload: String,
-    #[ts(type = "number")]
+    #[ts(type = "number | null")]
     pub ts_ms: Option<u64>,
     pub refused: bool,
 }
@@ -419,7 +437,7 @@ pub struct DecideBody {
 pub struct DecideOutcomeDto {
     pub id: String,
     pub status: String,
-    #[ts(type = "number")]
+    #[ts(type = "number | null")]
     pub decided_ms: Option<u64>,
 }
 

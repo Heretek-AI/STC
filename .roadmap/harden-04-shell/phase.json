@@ -1,0 +1,6 @@
+{
+  "phase": "harden-04-shell",
+  "goal": "Harden cockpit-shell MS-1: SSE parity + cursor races, WS Ready contract pre-reg, daemon PID/version + version-length bound, hub burst waiter guidance, limit clamp pin, codegen re-measure, chronofault robustness, Ask double-decide + contract (V1-V14+X1-X4, F1-F7 clean-room/keep)",
+  "acceptance": [],
+  "status": "briefed"
+}

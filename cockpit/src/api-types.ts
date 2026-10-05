@@ -10,7 +10,7 @@ export type CountsDto = { building: number, validating: number, in_review: numbe
 
 export type StatusDto = { source: string, db_age_ms: number, staleness: StalenessDto, change_seq: number, counts: CountsDto, tasks: Array<TaskDto>, daemon_reachable: boolean, };
 
-export type AskItemDto = { id: string, task_id: string, tool: string, status: string, reason: string | null, created_ms: number, decided_ms: number, decision_enabled: boolean, };
+export type AskItemDto = { id: string, task_id: string, tool: string, status: string, reason: string | null, created_ms: number, decided_ms: number | null, decision_enabled: boolean, };
 
 export type AskFeedDto = { source: string, decision_contract: string, items: Array<AskItemDto>, };
 
@@ -24,7 +24,7 @@ export type DaemonDto = { reachable: boolean, pid_file: string, version_file: st
 
 export type HubDto = { floor_seq: number, head_seq: number, retained: number, cap: number, };
 
-export type HealthDto = { version: string, db_path: string, db_ok: boolean, schema_version: number, daemon: DaemonDto, hub: HubDto, };
+export type HealthDto = { version: string, db_path: string, db_ok: boolean, schema_version: number | null, daemon: DaemonDto, hub: HubDto, };
 
 export type BucketDto = { name: string, order: number, tasks: Array<TaskDto>, };
 
@@ -32,7 +32,7 @@ export type NotificationDto = { id: string, task_id: string, tool: string, kind:
 
 export type WarRoomDto = { source: string, db_age_ms: number, staleness: StalenessDto, change_seq: number, buckets: Array<BucketDto>, notifications: Array<NotificationDto>, };
 
-export type AgentEventDto = { seq: number, kind: string, provider: string, protocol_version: number, payload: string, ts_ms: number, refused: boolean, };
+export type AgentEventDto = { seq: number, kind: string, provider: string, protocol_version: number, payload: string, ts_ms: number | null, refused: boolean, };
 
 export type HookProviderDto = { name: string, protocol_version: number, compatible: boolean, };
 
@@ -66,5 +66,5 @@ export type RunsDto = { source: string, db_age_ms: number, staleness: StalenessD
 
 export type DecideBody = { approved: boolean, reason: string, };
 
-export type DecideOutcomeDto = { id: string, status: string, decided_ms: number, };
+export type DecideOutcomeDto = { id: string, status: string, decided_ms: number | null, };
 

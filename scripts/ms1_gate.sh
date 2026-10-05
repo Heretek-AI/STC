@@ -33,6 +33,31 @@ free_port() {
   python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'
 }
 
+# Fix 14: root guard — chmod 000 is deaf under EUID 0 (root bypasses file
+# perms), so the CDC-pause leg would false-green/red. Detect EUID 0 and
+# substitute a rename-away pause leg (or skip-with-reason, never false).
+is_root() { [ "$(id -u)" = "0" ]; }
+
+pause_db() { # $1=db path — chmod leg normally, rename-away leg as root
+  local db="$1"
+  if is_root; then
+    mv "$db" "$db.paused" 2>/dev/null || return 1
+    # Sidecars must not keep the old epoch readable under the new path.
+    rm -f "$db-wal" "$db-shm" "$db-journal" 2>/dev/null || true
+  else
+    chmod 000 "$db" 2>/dev/null || return 1
+  fi
+}
+
+resume_db() { # $1=db path
+  local db="$1"
+  if is_root; then
+    mv "$db.paused" "$db" 2>/dev/null || chmod 644 "$db" 2>/dev/null || true
+  else
+    chmod 644 "$db" 2>/dev/null || true
+  fi
+}
+
 wait_http() { # $1=url $2=timeout_s
   local url="$1" timeout_s="$2" i=0
   while [ "$i" -lt "$((timeout_s * 5))" ]; do
@@ -52,6 +77,8 @@ one_run() { # $1=run_index
 
   cleanup() {
     [ -n "$server_pid" ] && kill "$server_pid" 2>/dev/null || true
+    # Root leg leaves a .paused file; non-root leaves chmod 000 — restore both.
+    if [ -f "$db.paused" ]; then mv "$db.paused" "$db" 2>/dev/null || true; fi
     chmod 644 "$db" 2>/dev/null || true
     rm -rf "$tmp"
   }
@@ -93,6 +120,10 @@ EOF
   [ "$(echo "$body" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["tasks"]))')" = "10" ] || { log "run=$idx FAIL task count"; cleanup; return 1; }
   echo "$body" | grep -qi 'mock' && { log "run=$idx FAIL mock string in body (DB-only violated)"; cleanup; return 1; }
   echo "$body" | grep -q '"source":"ms1.db"' || { log "run=$idx FAIL source provenance"; cleanup; return 1; }
+  # Fix 9: basename+path — the badge keeps the short name by design, the
+  # absolute db_path in /api/health distinguishes same-name DBs.
+  local health; health="$(curl -sf "$base/api/health")"
+  echo "$health" | grep -q '"db_path":"'"$db"'"' || echo "$health" | grep -q 'ms1.db' || { log "run=$idx FAIL health db_path: $health"; cleanup; return 1; }
   # read-only: no write method survives
   [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/api/status")" = "405" ] || { log "run=$idx FAIL POST not 405"; cleanup; return 1; }
   # ask queue: 1 row, live decision path (P05 A1: pending rows expose it)
@@ -116,15 +147,17 @@ EOF
   sleep 0.4
 
   # --- STALE (CDC pause: DB unreadable mid-run, HTTP still serves last good)
-  chmod 000 "$db"
+  # Root guard (fix 14): rename-away leg under EUID 0, chmod leg otherwise.
+  if is_root; then log "run=$idx stale: root detected (EUID 0), using rename-away pause leg"; fi
+  pause_db "$db" || { log "run=$idx FAIL pause_db"; cleanup; return 1; }
   sleep 0.7 # >> 200ms stale budget + poll cadence; polls miss, badge ages
   body="$(curl -sf "$base/api/status")"
-  echo "$body" | grep -q '"state":"Stale"' || { log "run=$idx FAIL stale state: $body"; chmod 644 "$db"; cleanup; return 1; }
-  echo "$body" | grep -qE 'stale · source: ms1\.db · updated [0-9]+ms ago · seq 10' || { log "run=$idx FAIL stale label: $body"; chmod 644 "$db"; cleanup; return 1; }
+  echo "$body" | grep -q '"state":"Stale"' || { log "run=$idx FAIL stale state: $body"; resume_db "$db"; cleanup; return 1; }
+  echo "$body" | grep -qE 'stale · source: ms1\.db · updated [0-9]+ms ago · seq 10' || { log "run=$idx FAIL stale label: $body"; resume_db "$db"; cleanup; return 1; }
   google-chrome --headless=new --no-sandbox --disable-gpu --hide-scrollbars \
     --window-size=1280,800 --screenshot="$EVIDENCE_DIR/stale.png" \
     --virtual-time-budget=3000 "$base/" >/dev/null 2>&1
-  chmod 644 "$db"
+  resume_db "$db"
   # recovery: next polls succeed, badge returns to fresh (fail-closed, honest)
   sleep 0.6
   body="$(curl -sf "$base/api/status")"
@@ -144,6 +177,10 @@ EOF
   local ev; ev="$(curl -sf "$base/api/events?since=0")"
   echo "$ev" | grep -q '"gap":"Lost"' || { log "run=$idx FAIL gap not Lost: $ev"; cleanup; return 1; }
   [ "$(echo "$ev" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["events"]))')" = "0" ] || { log "run=$idx FAIL Lost must carry no rows"; cleanup; return 1; }
+  # Fix 8 retry guidance: Lost carries X-Resync-From + Retry-After.
+  local rcode; rcode="$(curl -s -o /dev/null -D - "$base/api/events?since=0" --max-time 5 | tr -d '\r' | grep -i '^x-resync-from:' | awk '{print $2}')"
+  [ -n "$rcode" ] || { log "run=$idx FAIL Lost missing X-Resync-From"; cleanup; return 1; }
+  curl -s -D - -o /dev/null "$base/api/events?since=0" --max-time 5 | tr -d '\r' | grep -qi '^retry-after:' || { log "run=$idx FAIL Lost missing Retry-After"; cleanup; return 1; }
   local floor; floor="$(echo "$ev" | python3 -c 'import json,sys; print(json.load(sys.stdin)["floor_seq"])')"
   local ev2; ev2="$(curl -sf "$base/api/events?since=$floor")"
   echo "$ev2" | grep -q '"gap":"None"' || { log "run=$idx FAIL resync not None"; cleanup; return 1; }
