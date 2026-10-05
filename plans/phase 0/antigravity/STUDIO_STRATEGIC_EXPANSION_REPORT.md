@@ -1,9 +1,9 @@
 # Studio: Strategic Expansion & Advanced Systems Architecture
 ## Comprehensive Research Report & Technical Specification
 
-> **File Location**: `/home/john/Projects/STC/plans/antigravity/STUDIO_STRATEGIC_EXPANSION_REPORT.md`  
-> **Status**: Approved Architectural Extension Report  
-> **Target Subsystems**: Multi-Modal Pipelines (3D/Video), Distributed Topology, Long-Term Memory (Vector vs AST vs FTS5), Anti-Stalling & Anti-Tapping Engines, Modular Agent Templates, Multi-Profile OAuth Virtualization  
+> **File Location**: `/home/john/Projects/STC/plans/antigravity/STUDIO_STRATEGIC_EXPANSION_REPORT.md`
+> **Status**: Approved Architectural Extension Report
+> **Target Subsystems**: Multi-Modal Pipelines (3D/Video), Distributed Topology, Long-Term Memory (Vector vs AST vs FTS5), Anti-Stalling & Anti-Tapping Engines, Modular Agent Templates, Multi-Profile OAuth Virtualization
 > **Date**: September 2026
 
 ---
@@ -205,19 +205,19 @@ LLM agents frequently "tap out" by completing partial work and suggesting that t
 ```mermaid
 flowchart TD
     AgentTurn["Agent Finishes Turn (Proposes Stop)"] --> StopHook{"Harness Stop Hook Intercepts"}
-    
+
     StopHook --> CheckAcceptance{"All ACCEPTANCE items verified?"}
     CheckAcceptance -- No --> InjectCritique["Inject: 'Criteria FR-042 unsatisfied. Continue work.'"]
     InjectCritique --> AgentTurn
-    
+
     CheckAcceptance -- Yes --> RunVerification{"Automated Tests & Lint Pass?"}
     RunVerification -- No --> InjectTestFail["Inject: Test failure stdout. 'Fix errors before stopping.'"]
     InjectTestFail --> AgentTurn
-    
+
     RunVerification -- Yes --> LoopGuard{"Spin / Repeat Loop Detected?"}
     LoopGuard -- Yes (Repeat >= 3) --> Nudge["Inject: Loop Warning Nudge"]
     LoopGuard -- Yes (Repeat >= 5) --> EscalateLead["Halt turn; Escalate to Tech Lead"]
-    
+
     LoopGuard -- No --> ApproveStop["Turn Accepted -> Enqueue for Review"]
 ```
 

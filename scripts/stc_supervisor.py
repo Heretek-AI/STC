@@ -54,7 +54,7 @@ def run_gates():
     5. npm run build (in cockpit)
     """
     results = {}
-    
+
     # 1. Cargo fmt
     code, out, err = run_cmd("cargo fmt --check", cwd=REPO_ROOT / "studio-core")
     results["fmt"] = (code == 0, out + err)

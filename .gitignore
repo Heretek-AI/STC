@@ -35,3 +35,4 @@ cockpit/src-tauri/gen/
 .research/sources/*
 .factory/
 .archive/
+.studio/

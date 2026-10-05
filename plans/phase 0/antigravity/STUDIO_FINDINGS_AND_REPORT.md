@@ -1,10 +1,10 @@
 # Studio: Next-Generation Autonomous AI Engineering Platform
 ## Forensic Audit, Systems Architecture, and Synthesis Report
 
-> **Location**: `/home/john/Projects/STC/plans/antigravity/STUDIO_FINDINGS_AND_REPORT.md`  
-> **Classification**: Architectural Blueprint, Forensic Research Report, and Strategic Technical Plan  
-> **Role & Author**: Principal Systems Architect, Lead Distributed Systems Engineer, Staff Product Designer  
-> **Reference Corpora**: 12 Repositories Audited at `/home/john/Projects/STC/review/`  
+> **Location**: `/home/john/Projects/STC/plans/antigravity/STUDIO_FINDINGS_AND_REPORT.md`
+> **Classification**: Architectural Blueprint, Forensic Research Report, and Strategic Technical Plan
+> **Role & Author**: Principal Systems Architect, Lead Distributed Systems Engineer, Staff Product Designer
+> **Reference Corpora**: 12 Repositories Audited at `/home/john/Projects/STC/review/`
 > **Date**: September 2026
 
 ---
@@ -278,7 +278,7 @@ flowchart TB
     subgraph StudioCore["Studio Core Engine (Rust / Tokio)"]
         APIGateway["API Gateway & WebSocket Server"]
         Supervisor["Studio Supervisor & Task DAG Coordinator"]
-        
+
         subgraph ConcurrencySubsystem["Git Worktree Engine"]
             WTLock["Worktree Operation Mutex"]
             WTManager["Worktree Lifecycle Manager"]
